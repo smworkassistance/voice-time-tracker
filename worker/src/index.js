@@ -80,6 +80,11 @@ async function handleInsights(request, env) {
     .map((a) => `- "${a.name}" — ${a.tag || "untagged"} — ${Math.round(a.duration / 60000)} min`)
     .join("\n");
 
+  const untagged = activities.filter((a) => !a.tag && a.id);
+  const classifyBlock = untagged.length
+    ? `\nSome activities have no tag because the user didn't say one out loud. Classify each by id as exactly one of: useful, necessary, waste, semi-useful — based on the goal context above and the activity name.\nUntagged activities:\n${untagged.map((a) => `- id "${a.id}": "${a.name}"`).join("\n")}\n`
+    : "";
+
   const prompt = `
 You are analyzing a personal time-tracking log for ${dateLabel || "today"}.
 ${GOAL_CONTEXT}
@@ -88,12 +93,14 @@ Total day elapsed so far: ${Math.round((dayElapsedMs || 0) / 60000)} minutes.
 
 Activity log:
 ${activityLines || "(no activities logged)"}
-
+${classifyBlock}
 Respond ONLY with JSON in this exact shape:
 {
   "score": <integer 0-100, productivity score>,
-  "insights": ["<short actionable Hinglish insight>", "... 3-4 total"]
+  "insights": ["<short actionable Hinglish insight>", "... 3-4 total"],
+  "classifications": [{"id": "<activity id>", "tag": "<useful|necessary|waste|semi-useful>"}, ...]
 }
+Omit "classifications" entirely (or leave it an empty array) if there were no untagged activities to classify.
 Insights must be short, specific, actionable, and in Hinglish (mix of Hindi+English), matching the tone of a friendly coach — not generic praise.
 `.trim();
 
@@ -122,7 +129,7 @@ Insights must be short, specific, actionable, and in Hinglish (mix of Hindi+Engl
     return json({ error: "Gemini returned unparseable output", raw: text }, 502, origin);
   }
 
-  return json({ score: parsed.score, insights: parsed.insights || [] }, 200, origin);
+  return json({ score: parsed.score, insights: parsed.insights || [], classifications: parsed.classifications || [] }, 200, origin);
 }
 
 async function handleSync(request, env) {

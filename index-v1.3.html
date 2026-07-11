@@ -85,6 +85,17 @@
   .summary-row .val{font-weight:600;}
   .summary-close{width:100%; margin-top:16px; padding:14px; border-radius:14px; background:var(--accent); color:#fff; font-weight:600;}
 
+  .donut{width:140px; height:140px; border-radius:50%; margin:8px auto 16px; display:flex; align-items:center; justify-content:center;}
+  .donut-hole{width:98px; height:98px; border-radius:50%; background:var(--panel); display:flex; flex-direction:column; align-items:center; justify-content:center;}
+  .donut-hole span{font-size:26px; font-weight:700; line-height:1;}
+  .donut-hole small{font-size:10px; color:var(--sub); margin-top:2px;}
+  .trend-title{margin-top:16px; font-size:12px; color:var(--sub); text-transform:uppercase; letter-spacing:.5px;}
+  .trend-chart{display:flex; align-items:flex-end; gap:8px; height:90px; margin-top:10px; padding:0 2px;}
+  .trend-bar-col{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%;}
+  .trend-bar{width:100%; background:var(--accent); border-radius:4px 4px 0 0; min-height:3px;}
+  .trend-bar-today{background:var(--useful);}
+  .trend-bar-label{font-size:10px; color:var(--sub); margin-top:4px;}
+
   .top-actions{position:relative;}
 </style>
 </head>
@@ -648,6 +659,8 @@
     document.getElementById("summaryOverlay").classList.add("hidden");
   });
 
+  const TAG_COLOR_VAR = {useful:"useful", necessary:"necessary", "semi-useful":"semi", waste:"waste", unset:"unset"};
+
   function computeDayStats(dayKey){
     const log = state.history[dayKey] || [];
     const totals = {useful:0, necessary:0, waste:0, "semi-useful":0, unset:0};
@@ -657,11 +670,56 @@
       totals[key] = (totals[key]||0) + l.duration;
       totalLogged += l.duration;
     });
-    const isToday = dayKey === state.todayKey;
+    const isToday = dayKey === todayKey();
     const dayElapsed = isToday ? (Date.now() - startOfDay(new Date()).getTime()) : 24*60*60*1000;
     const unaccounted = Math.max(0, dayElapsed - totalLogged);
     const score = dayElapsed > 0 ? Math.round(((totals.useful + totals.necessary*0.5) / dayElapsed) * 100) : 0;
     return { totals, dayElapsed, unaccounted, score };
+  }
+
+  // "How am I doing" — a donut breakdown of today's useful/necessary/waste/rest split.
+  function buildDonutChart(stats, score){
+    const total = stats.dayElapsed;
+    const segments = [
+      ["useful", stats.totals.useful],
+      ["necessary", stats.totals.necessary],
+      ["semi-useful", stats.totals["semi-useful"]],
+      ["waste", stats.totals.waste],
+      ["unset", stats.totals.unset]
+    ];
+    let cursor = 0;
+    const stops = [];
+    segments.forEach(function(seg){
+      const pct = total > 0 ? (seg[1] / total) * 100 : 0;
+      if(pct <= 0) return;
+      stops.push(`var(--${TAG_COLOR_VAR[seg[0]]}) ${cursor}% ${cursor + pct}%`);
+      cursor += pct;
+    });
+    stops.push(`var(--panel2) ${cursor}% 100%`);
+    return `<div class="donut" style="background:conic-gradient(${stops.join(", ")});">
+      <div class="donut-hole"><span>${score}</span><small>SCORE /100</small></div>
+    </div>`;
+  }
+
+  // "Good or dumb over time" — last 7 days' productivity score as a bar trend.
+  function buildTrendChart(){
+    const cols = [];
+    for(let i = 6; i >= 0; i--){
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = todayKey(d);
+      const stats = computeDayStats(key);
+      const label = d.toLocaleDateString(undefined, { weekday: "short" }).slice(0, 2);
+      cols.push({ score: stats.score, label: label, isToday: i === 0 });
+    }
+    const bars = cols.map(function(c){
+      const h = Math.max(3, Math.min(100, c.score));
+      return `<div class="trend-bar-col">
+        <div class="trend-bar${c.isToday ? " trend-bar-today" : ""}" style="height:${h}%" title="${c.score}/100"></div>
+        <div class="trend-bar-label">${c.label}</div>
+      </div>`;
+    }).join("");
+    return `<div class="trend-title">Last 7 Days</div><div class="trend-chart">${bars}</div>`;
   }
 
   function buildRows(stats){
@@ -677,10 +735,12 @@
 
   function rowsHtml(score, stats){
     const pct = function(ms){ return stats.dayElapsed > 0 ? Math.round((ms/stats.dayElapsed)*100) : 0; };
-    return `<div class="summary-row"><span>Productivity Score</span><span class="val">${score}/100</span></div>` +
+    return buildDonutChart(stats, score) +
+      `<div class="summary-row"><span>Productivity Score</span><span class="val">${score}/100</span></div>` +
       buildRows(stats).map(function(r){
         return `<div class="summary-row"><span>${r[0]}</span><span class="val">${fmtHM(r[1])} (${pct(r[1])}%)</span></div>`;
-      }).join("");
+      }).join("") +
+      buildTrendChart();
   }
 
   async function showSummary(){
