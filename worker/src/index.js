@@ -141,7 +141,7 @@ async function handleSync(request, env) {
 
   // Replace-the-day strategy: wipe existing rows for this day, then re-insert
   // the full current log. Simplest way to handle edits/undo without diffing.
-  const delRes = await fetch(`${env.SUPABASE_URL}/rest/v1/activities?day_key=eq.${dayKey}`, {
+  const delRes = await fetch(`${env.SUPABASE_URL}/rest/v1/voice_tracker_activities?day_key=eq.${dayKey}`, {
     method: "DELETE",
     headers,
   });
@@ -161,7 +161,7 @@ async function handleSync(request, env) {
       end_ms: a.end,
       duration_ms: a.duration,
     }));
-    const insRes = await fetch(`${env.SUPABASE_URL}/rest/v1/activities`, {
+    const insRes = await fetch(`${env.SUPABASE_URL}/rest/v1/voice_tracker_activities`, {
       method: "POST",
       headers: { ...headers, Prefer: "return=minimal" },
       body: JSON.stringify(rows),
@@ -178,7 +178,7 @@ async function handleSync(request, env) {
 async function handleHistory(request, env) {
   const origin = request.headers.get("Origin");
   const res = await fetch(
-    `${env.SUPABASE_URL}/rest/v1/activities?select=*&order=day_key.asc,start_ms.asc`,
+    `${env.SUPABASE_URL}/rest/v1/voice_tracker_activities?select=*&order=day_key.asc,start_ms.asc`,
     {
       headers: {
         apikey: env.SUPABASE_SERVICE_KEY,
