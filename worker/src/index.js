@@ -18,7 +18,7 @@ function corsHeaders(origin) {
   const allowOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
     "Access-Control-Allow-Origin": allowOrigin,
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
   };
 }
@@ -125,6 +125,88 @@ Insights must be short, specific, actionable, and in Hinglish (mix of Hindi+Engl
   return json({ score: parsed.score, insights: parsed.insights || [] }, 200, origin);
 }
 
+async function handleSync(request, env) {
+  const origin = request.headers.get("Origin");
+  const body = await request.json();
+  const { dayKey, activities } = body;
+  if (!dayKey || !Array.isArray(activities)) {
+    return json({ error: "dayKey and activities array are required" }, 400, origin);
+  }
+
+  const headers = {
+    apikey: env.SUPABASE_SERVICE_KEY,
+    Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+    "Content-Type": "application/json",
+  };
+
+  // Replace-the-day strategy: wipe existing rows for this day, then re-insert
+  // the full current log. Simplest way to handle edits/undo without diffing.
+  const delRes = await fetch(`${env.SUPABASE_URL}/rest/v1/activities?day_key=eq.${dayKey}`, {
+    method: "DELETE",
+    headers,
+  });
+  if (!delRes.ok) {
+    const err = await delRes.json().catch(() => ({}));
+    return json({ error: err.message || "Supabase delete failed" }, 502, origin);
+  }
+
+  if (activities.length > 0) {
+    const rows = activities.map((a) => ({
+      id: a.id,
+      day_key: dayKey,
+      name: a.name,
+      tag: a.tag || null,
+      raw_text: a.rawText || "",
+      start_ms: a.start,
+      end_ms: a.end,
+      duration_ms: a.duration,
+    }));
+    const insRes = await fetch(`${env.SUPABASE_URL}/rest/v1/activities`, {
+      method: "POST",
+      headers: { ...headers, Prefer: "return=minimal" },
+      body: JSON.stringify(rows),
+    });
+    if (!insRes.ok) {
+      const err = await insRes.json().catch(() => ({}));
+      return json({ error: err.message || "Supabase insert failed" }, 502, origin);
+    }
+  }
+
+  return json({ ok: true }, 200, origin);
+}
+
+async function handleHistory(request, env) {
+  const origin = request.headers.get("Origin");
+  const res = await fetch(
+    `${env.SUPABASE_URL}/rest/v1/activities?select=*&order=day_key.asc,start_ms.asc`,
+    {
+      headers: {
+        apikey: env.SUPABASE_SERVICE_KEY,
+        Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+      },
+    }
+  );
+  const rows = await res.json();
+  if (!res.ok) {
+    return json({ error: rows.message || "Supabase history fetch failed" }, 502, origin);
+  }
+
+  const history = {};
+  for (const r of rows) {
+    if (!history[r.day_key]) history[r.day_key] = [];
+    history[r.day_key].push({
+      id: r.id,
+      name: r.name,
+      tag: r.tag,
+      rawText: r.raw_text,
+      start: Number(r.start_ms),
+      end: Number(r.end_ms),
+      duration: Number(r.duration_ms),
+    });
+  }
+  return json({ history }, 200, origin);
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin");
@@ -139,6 +221,12 @@ export default {
       }
       if (request.method === "POST" && url.pathname === "/insights") {
         return await handleInsights(request, env);
+      }
+      if (request.method === "POST" && url.pathname === "/sync") {
+        return await handleSync(request, env);
+      }
+      if (request.method === "GET" && url.pathname === "/history") {
+        return await handleHistory(request, env);
       }
     } catch (err) {
       return json({ error: err.message || "Unexpected error" }, 500, origin);

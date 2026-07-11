@@ -223,11 +223,39 @@
     return state.history[state.todayKey];
   }
 
+  // ---- Cloud sync (Supabase, via the Worker) — best-effort, offline-friendly ----
+  // localStorage stays the source of truth; this is a fire-and-forget mirror so
+  // history survives a cleared browser / lets a new device recover past days.
+  function syncDayToCloud(dayKey){
+    fetch(API_BASE + "/sync", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ dayKey: dayKey, activities: state.history[dayKey] || [] })
+    }).catch(function(){ /* offline or Worker unreachable — ignore, local data is safe */ });
+  }
+
+  async function hydrateHistoryFromCloud(){
+    try{
+      const res = await fetch(API_BASE + "/history");
+      const data = await res.json();
+      if(!res.ok || data.error) return;
+      let changed = false;
+      Object.keys(data.history || {}).forEach(function(dayKey){
+        if(!state.history[dayKey]){
+          state.history[dayKey] = data.history[dayKey];
+          changed = true;
+        }
+      });
+      if(changed) saveState();
+    }catch(e){ /* offline or Worker unreachable — local data is unaffected */ }
+  }
+
   // ---- Day-boundary rollover handling (edge case: midnight crossing, app closed) ----
   function rolloverIfNeeded(){
     const tk = todayKey();
     if(tk === state.todayKey) return;
 
+    const closedDayKey = state.todayKey;
     if(state.currentActivity){
       const startDate = new Date(state.currentActivity.start);
       const startDay = todayKey(startDate);
@@ -257,6 +285,7 @@
     state.todayKey = tk;
     if(!state.history[tk]) state.history[tk] = [];
     saveState();
+    syncDayToCloud(closedDayKey);
   }
 
   // ---- Tag parsing ----
@@ -379,6 +408,7 @@
     startNewActivity(parsed, now);
     saveState();
     renderAll();
+    syncDayToCloud(state.todayKey);
   }
 
   // ---- Voice capture: raw PCM via Web Audio API, transcribed by a cloud STT
@@ -555,6 +585,7 @@
     closeCurrentActivity(Date.now());
     saveState();
     renderAll();
+    syncDayToCloud(state.todayKey);
   });
 
   document.getElementById("btnUndo").addEventListener("click", function(){
@@ -563,6 +594,7 @@
     log.pop();
     saveState();
     renderAll();
+    syncDayToCloud(state.todayKey);
   });
 
   document.getElementById("langToggle").addEventListener("click", function(){
@@ -589,6 +621,7 @@
       closeCurrentActivity(Date.now());
       saveState();
       renderAll();
+      syncDayToCloud(state.todayKey);
     }
     showSummary();
   });
@@ -660,6 +693,7 @@
   renderAll();
   tick();
   setInterval(tick, 1000);
+  hydrateHistoryFromCloud();
 
 })();
 </script>
