@@ -2,7 +2,8 @@
 // Keeps Google Cloud STT + Gemini API keys server-side; the static frontend
 // (GitHub Pages) calls these two endpoints instead of calling Google directly.
 
-const ALLOWED_ORIGIN = "*"; // TODO: once deployed, restrict to your GitHub Pages origin.
+// "null" covers local file:// testing (browsers send Origin: null for those requests).
+const ALLOWED_ORIGINS = ["https://smworkassistance.github.io", "null"];
 
 const GOAL_CONTEXT = `
 Videh's goals, for judging activity alignment:
@@ -13,25 +14,27 @@ Videh's goals, for judging activity alignment:
 - Scrolling, random browsing, procrastination = usually WASTE, unless explicitly tied to research for CLAR/Shreemant.
 `.trim();
 
-function corsHeaders() {
+function corsHeaders(origin) {
+  const allowOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
-    "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+    "Access-Control-Allow-Origin": allowOrigin,
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
   };
 }
 
-function json(data, status = 200) {
+function json(data, status, origin) {
   return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json", ...corsHeaders() },
+    status: status || 200,
+    headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
   });
 }
 
 async function handleTranscribe(request, env) {
+  const origin = request.headers.get("Origin");
   const body = await request.json();
   const { audioBase64, sampleRateHertz, languageCode } = body;
-  if (!audioBase64) return json({ error: "audioBase64 is required" }, 400);
+  if (!audioBase64) return json({ error: "audioBase64 is required" }, 400, origin);
 
   const primaryLang = languageCode || "en-IN";
   const altLang = primaryLang === "hi-IN" ? "en-IN" : "hi-IN";
@@ -56,7 +59,7 @@ async function handleTranscribe(request, env) {
 
   const sttData = await sttRes.json();
   if (!sttRes.ok) {
-    return json({ error: sttData.error?.message || "Google STT request failed" }, 502);
+    return json({ error: sttData.error?.message || "Google STT request failed" }, 502, origin);
   }
 
   const transcript = (sttData.results || [])
@@ -64,13 +67,14 @@ async function handleTranscribe(request, env) {
     .join(" ")
     .trim();
 
-  return json({ transcript });
+  return json({ transcript }, 200, origin);
 }
 
 async function handleInsights(request, env) {
+  const origin = request.headers.get("Origin");
   const body = await request.json();
   const { dateLabel, activities, dayElapsedMs } = body;
-  if (!Array.isArray(activities)) return json({ error: "activities array is required" }, 400);
+  if (!Array.isArray(activities)) return json({ error: "activities array is required" }, 400, origin);
 
   const activityLines = activities
     .map((a) => `- "${a.name}" — ${a.tag || "untagged"} — ${Math.round(a.duration / 60000)} min`)
@@ -107,7 +111,7 @@ Insights must be short, specific, actionable, and in Hinglish (mix of Hindi+Engl
 
   const geminiData = await geminiRes.json();
   if (!geminiRes.ok) {
-    return json({ error: geminiData.error?.message || "Gemini request failed" }, 502);
+    return json({ error: geminiData.error?.message || "Gemini request failed" }, 502, origin);
   }
 
   const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
@@ -115,16 +119,17 @@ Insights must be short, specific, actionable, and in Hinglish (mix of Hindi+Engl
   try {
     parsed = JSON.parse(text);
   } catch (e) {
-    return json({ error: "Gemini returned unparseable output", raw: text }, 502);
+    return json({ error: "Gemini returned unparseable output", raw: text }, 502, origin);
   }
 
-  return json({ score: parsed.score, insights: parsed.insights || [] });
+  return json({ score: parsed.score, insights: parsed.insights || [] }, 200, origin);
 }
 
 export default {
   async fetch(request, env) {
+    const origin = request.headers.get("Origin");
     if (request.method === "OPTIONS") {
-      return new Response(null, { headers: corsHeaders() });
+      return new Response(null, { headers: corsHeaders(origin) });
     }
 
     const url = new URL(request.url);
@@ -136,9 +141,9 @@ export default {
         return await handleInsights(request, env);
       }
     } catch (err) {
-      return json({ error: err.message || "Unexpected error" }, 500);
+      return json({ error: err.message || "Unexpected error" }, 500, origin);
     }
 
-    return json({ error: "Not found" }, 404);
+    return json({ error: "Not found" }, 404, origin);
   },
 };
