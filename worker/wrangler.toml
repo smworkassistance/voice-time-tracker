@@ -1,0 +1,10 @@
+name = "voice-time-tracker-api"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# Secrets (set these with `wrangler secret put <NAME>` — never put them here):
+#   GOOGLE_STT_API_KEY
+#   GEMINI_API_KEY
+
+# Once you know your GitHub Pages origin, lock CORS down to it in src/index.js
+# (look for ALLOWED_ORIGIN) instead of leaving it wide open.
