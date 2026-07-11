@@ -757,19 +757,20 @@
         body: JSON.stringify({
           dateLabel: state.todayKey,
           dayElapsedMs: stats.dayElapsed,
-          activities: todayLog().map(function(l){ return { id: l.id, name: l.name, tag: l.tag, duration: l.duration }; })
+          activities: todayLog().map(function(l){ return { id: l.id, name: l.name, tag: l.tag, rawText: l.rawText, duration: l.duration }; })
         })
       });
       const data = await res.json();
       if(!res.ok || data.error) throw new Error(data.error || "Insights request failed");
 
-      // Apply AI classification for any activity the user didn't tag out loud
-      // (spec: user's spoken tag is always final truth; AI only fills gaps).
+      // Apply Gemini's tag for every activity: it reads the full spoken sentence
+      // (rawText) and correctly picks up tags the local keyword matcher misses,
+      // e.g. tags spoken in Hindi/Hinglish rather than the exact English word.
       if(Array.isArray(data.classifications) && data.classifications.length){
         const log = todayLog();
         data.classifications.forEach(function(c){
           const lap = log.find(function(l){ return l.id === c.id; });
-          if(lap && !lap.tag && c.tag){ lap.tag = c.tag; }
+          if(lap && c.tag){ lap.tag = c.tag; }
         });
         saveState();
         syncDayToCloud(state.todayKey);

@@ -80,9 +80,9 @@ async function handleInsights(request, env) {
     .map((a) => `- "${a.name}" — ${a.tag || "untagged"} — ${Math.round(a.duration / 60000)} min`)
     .join("\n");
 
-  const untagged = activities.filter((a) => !a.tag && a.id);
-  const classifyBlock = untagged.length
-    ? `\nSome activities have no tag because the user didn't say one out loud. Classify each by id as exactly one of: useful, necessary, waste, semi-useful — based on the goal context above and the activity name.\nUntagged activities:\n${untagged.map((a) => `- id "${a.id}": "${a.name}"`).join("\n")}\n`
+  const taggable = activities.filter((a) => a.id);
+  const classifyBlock = taggable.length
+    ? `\nFor EACH activity below, determine the correct tag by understanding what the user actually said (raw_text), not just the quick local guess shown as "current tag". The user may state the tag in English, Hindi, or Hinglish (e.g. "useful"/"upyogi", "necessary"/"zaroori", "waste"/"faltu"/"bekaar"/"time waste", "semi-useful"). If they clearly stated a tag in any of these forms, use exactly that — even if it differs from or contradicts the current tag, which came from a simple keyword matcher that often misses non-English phrasing. If they did NOT state any tag at all, classify it yourself using the goal context above. Always output exactly one classification per activity id listed here, even when it just confirms the current tag.\nActivities:\n${taggable.map((a) => `- id "${a.id}": said "${a.rawText || a.name}" (current tag: ${a.tag || "none"})`).join("\n")}\n`
     : "";
 
   const prompt = `
@@ -100,7 +100,7 @@ Respond ONLY with JSON in this exact shape:
   "insights": ["<short actionable Hinglish insight>", "... 3-4 total"],
   "classifications": [{"id": "<activity id>", "tag": "<useful|necessary|waste|semi-useful>"}, ...]
 }
-Omit "classifications" entirely (or leave it an empty array) if there were no untagged activities to classify.
+Include one classifications entry per activity id listed above (empty array only if there were no activities).
 Insights must be short, specific, actionable, and in Hinglish (mix of Hindi+English), matching the tone of a friendly coach — not generic praise.
 `.trim();
 
