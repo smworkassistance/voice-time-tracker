@@ -241,12 +241,31 @@
       if(!res.ok || data.error) return;
       let changed = false;
       Object.keys(data.history || {}).forEach(function(dayKey){
-        if(!state.history[dayKey]){
-          state.history[dayKey] = data.history[dayKey];
-          changed = true;
+        const cloudEntries = data.history[dayKey] || [];
+        const localEntries = state.history[dayKey];
+        if(!localEntries || localEntries.length === 0){
+          // No local data for this day (a fresh browser starts today as an
+          // empty array) — just take the cloud copy.
+          if(cloudEntries.length > 0){
+            state.history[dayKey] = cloudEntries;
+            changed = true;
+          }
+        } else {
+          // Merge by id so entries logged on another device/browser show up
+          // alongside ones already recorded locally, without duplicating.
+          const localIds = new Set(localEntries.map(function(e){ return e.id; }));
+          const merged = localEntries.slice();
+          cloudEntries.forEach(function(e){
+            if(!localIds.has(e.id)) merged.push(e);
+          });
+          if(merged.length !== localEntries.length){
+            merged.sort(function(a,b){ return a.start - b.start; });
+            state.history[dayKey] = merged;
+            changed = true;
+          }
         }
       });
-      if(changed) saveState();
+      if(changed){ saveState(); renderAll(); }
     }catch(e){ /* offline or Worker unreachable — local data is unaffected */ }
   }
 
