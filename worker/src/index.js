@@ -73,7 +73,7 @@ async function handleTranscribe(request, env) {
 async function handleInsights(request, env) {
   const origin = request.headers.get("Origin");
   const body = await request.json();
-  const { dateLabel, activities, dayElapsedMs } = body;
+  const { dateLabel, activities, dayElapsedMs, sleepMs } = body;
   if (!Array.isArray(activities)) return json({ error: "activities array is required" }, 400, origin);
 
   const activityLines = activities
@@ -90,6 +90,7 @@ You are analyzing a personal time-tracking log for ${dateLabel || "today"}.
 ${GOAL_CONTEXT}
 
 Total day elapsed so far: ${Math.round((dayElapsedMs || 0) / 60000)} minutes.
+${sleepMs ? `Of that, ${Math.round(sleepMs / 60000)} minutes is normal 12am-6am sleep, already excluded from "unaccounted" time -- do NOT mention this as wasted, untracked, or something to explain.` : ""}
 
 Activity log:
 ${activityLines || "(no activities logged)"}
