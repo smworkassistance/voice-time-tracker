@@ -47,12 +47,11 @@
   .laps-header h3{font-size:13px; color:var(--sub); text-transform:uppercase; letter-spacing:.5px; font-weight:600; margin:0;}
   .undo-link{font-size:13px; color:var(--accent); background:none;}
 
-  .lap-item{display:flex; align-items:center; background:var(--panel); border-radius:14px; padding:12px 14px; margin-bottom:8px; border-left:4px solid var(--unset); cursor:pointer;}
+  .lap-item{display:flex; align-items:center; background:var(--panel); border-radius:14px; padding:12px 14px; margin-bottom:8px; border-left:4px solid var(--unset);}
   .lap-item.useful{border-left-color:var(--useful);}
   .lap-item.necessary{border-left-color:var(--necessary);}
   .lap-item.waste{border-left-color:var(--waste);}
   .lap-item.semi-useful{border-left-color:var(--semi);}
-  .lap-item.gap{border-left-style:dashed; opacity:.75;}
   .lap-main{flex:1; min-width:0;}
   .lap-name{font-size:15px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .lap-meta{font-size:12px; color:var(--sub); margin-top:2px;}
@@ -64,9 +63,6 @@
   .overlay.hidden{display:none;}
   .sheet{background:var(--panel); width:100%; max-width:480px; margin:0 auto; border-radius:24px 24px 0 0; padding:22px 20px 28px; animation:slideup .2s ease-out;}
   @keyframes slideup{from{transform:translateY(30px); opacity:0;} to{transform:translateY(0); opacity:1;}}
-  .entry-edit-time{display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:14px; font-size:15px; font-weight:600;}
-  .entry-edit-time.hidden{display:none;}
-  .entry-edit-time input[type="time"]{background:var(--panel2); color:var(--text); border:none; border-radius:10px; padding:8px 10px; font-family:inherit; font-size:15px;}
   .mic-pulse{width:64px; height:64px; border-radius:50%; background:var(--accent); margin:0 auto 16px; display:flex; align-items:center; justify-content:center; font-size:28px;}
   .mic-pulse.listening{animation:pulse 1.2s infinite;}
   @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(10,132,255,.5);} 70%{box-shadow:0 0 0 18px rgba(10,132,255,0);} 100%{box-shadow:0 0 0 0 rgba(10,132,255,0);}}
@@ -140,11 +136,6 @@
 <!-- Voice overlay -->
 <div class="overlay hidden" id="voiceOverlay">
   <div class="sheet">
-    <div class="entry-edit-time hidden" id="entryEditTimeRow">
-      <span id="entryEditStartLabel">--</span>
-      <span>–</span>
-      <input type="time" id="entryEditEndInput">
-    </div>
     <div class="mic-pulse" id="micPulse">🎙️</div>
     <div class="sheet-status" id="sheetStatus">Recording…</div>
     <textarea class="transcript-box" id="transcriptBox" placeholder="Speak, then tap Done — or type here…"></textarea>
@@ -156,7 +147,6 @@
       <button class="btn btn-stop" id="btnRerecord" style="flex:1;">Re-record</button>
       <button class="btn btn-start" id="btnConfirm" style="flex:1;">Confirm</button>
     </div>
-    <button class="btn btn-stop hidden" id="btnDeleteEntry" style="width:100%; margin-top:10px;">Delete This Entry</button>
   </div>
 </div>
 
@@ -186,19 +176,6 @@
   const TAG_LABEL = {useful:"Useful", necessary:"Necessary", waste:"Waste", "semi-useful":"Semi-useful"};
 
   function todayKey(d){ d = d || new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
-  function dayKeyToDate(dayKey){ const p = dayKey.split("-").map(Number); return new Date(p[0], p[1]-1, p[2]); }
-  function msToTimeValue(ms){ const d = new Date(ms); return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); }
-  function msToTimeValueClamped(ms, dayKey){
-    const dayStart = startOfDay(dayKeyToDate(dayKey)).getTime();
-    if(ms - dayStart >= 24*60*60*1000) return "23:59";
-    return msToTimeValue(ms);
-  }
-  function timeValueToMs(dayKey, value){
-    const parts = value.split(":").map(Number);
-    const d = dayKeyToDate(dayKey);
-    d.setHours(parts[0]||0, parts[1]||0, 0, 0);
-    return d.getTime();
-  }
   function startOfDay(d){ const n = new Date(d); n.setHours(0,0,0,0); return n; }
   function endOfDay(d){ const n = new Date(d); n.setHours(23,59,59,999); return n; }
   function startOfWeek(d){ // Monday 00:00
@@ -224,7 +201,7 @@
   function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 
   function defaultState(){
-    return { history:{}, currentActivity:null, currentActivityUpdatedAt:0, todayKey: todayKey(), lang:"en-IN", theme:"dark" };
+    return { history:{}, currentActivity:null, todayKey: todayKey(), lang:"en-IN", theme:"dark" };
   }
   function loadState(){
     try{
@@ -234,7 +211,6 @@
       if(!s.history) s.history = {};
       if(s.lang === undefined) s.lang = "en-IN";
       if(s.theme === undefined) s.theme = "dark";
-      if(s.currentActivityUpdatedAt === undefined) s.currentActivityUpdatedAt = 0;
       return s;
     }catch(e){ return defaultState(); }
   }
@@ -247,50 +223,6 @@
     return state.history[state.todayKey];
   }
 
-  // Centralized log-entry storage: every mutation (live recording, editing a
-  // past entry, filling a gap) goes through these two, so persistence + cloud
-  // sync is handled in exactly one place regardless of which flow triggered it.
-  function upsertLogEntry(dayKey, entry){
-    if(!state.history[dayKey]) state.history[dayKey] = [];
-    const log = state.history[dayKey];
-    const idx = log.findIndex(function(l){ return l.id === entry.id; });
-    if(idx >= 0) log[idx] = entry; else log.push(entry);
-    log.sort(function(a,b){ return a.start - b.start; });
-    saveState();
-    syncDayToCloud(dayKey);
-  }
-  function deleteLogEntry(dayKey, id){
-    if(!state.history[dayKey]) return;
-    state.history[dayKey] = state.history[dayKey].filter(function(l){ return l.id !== id; });
-    saveState();
-    syncDayToCloud(dayKey);
-  }
-
-  // Full-day timeline: real logged entries plus synthetic "gap" entries filling
-  // every uncovered minute, so the log always accounts for the whole day.
-  function buildDayTimeline(dayKey){
-    const log = (state.history[dayKey] || []).slice().sort(function(a,b){ return a.start - b.start; });
-    const dayStart = startOfDay(dayKeyToDate(dayKey)).getTime();
-    const isToday = dayKey === state.todayKey;
-    const dayEnd = isToday
-      ? (state.currentActivity ? state.currentActivity.start : Date.now())
-      : dayStart + 24*60*60*1000;
-
-    const timeline = [];
-    let cursor = dayStart;
-    log.forEach(function(entry){
-      if(entry.start > cursor){
-        timeline.push({ id:null, name:"Unaccounted", tag:null, rawText:"", start:cursor, end:entry.start, duration:entry.start-cursor, isGap:true });
-      }
-      timeline.push(entry);
-      cursor = Math.max(cursor, entry.end);
-    });
-    if(cursor < dayEnd){
-      timeline.push({ id:null, name:"Unaccounted", tag:null, rawText:"", start:cursor, end:dayEnd, duration:dayEnd-cursor, isGap:true });
-    }
-    return timeline;
-  }
-
   // ---- Cloud sync (Supabase, via the Worker) — best-effort, offline-friendly ----
   // localStorage stays the source of truth; this is a fire-and-forget mirror so
   // history survives a cleared browser / lets a new device recover past days.
@@ -300,43 +232,6 @@
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ dayKey: dayKey, activities: state.history[dayKey] || [] })
     }).catch(function(){ /* offline or Worker unreachable — ignore, local data is safe */ });
-  }
-
-  // Mirrors the LIVE running activity (not yet a finished lap) so another
-  // device can pick up "something is running" without waiting for it to end.
-  function syncCurrentActivityToCloud(){
-    const cur = state.currentActivity;
-    fetch(API_BASE + "/current", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        activityId: cur ? cur.id : null,
-        name: cur ? cur.name : null,
-        tag: cur ? cur.tag : null,
-        rawText: cur ? cur.rawText : null,
-        start: cur ? cur.start : null,
-        updatedAt: state.currentActivityUpdatedAt
-      })
-    }).catch(function(){ /* offline or Worker unreachable — local state is unaffected */ });
-  }
-
-  // Checks whether another device changed the running activity more recently
-  // than this one knows about, and if so, adopts that state.
-  async function pollCurrentActivityFromCloud(){
-    try{
-      const res = await fetch(API_BASE + "/current");
-      const data = await res.json();
-      if(!res.ok || data.error) return;
-      const remoteUpdatedAt = data.updatedAt || 0;
-      if(remoteUpdatedAt <= (state.currentActivityUpdatedAt || 0)) return;
-
-      state.currentActivity = data.activityId
-        ? { id: data.activityId, name: data.name, tag: data.tag, rawText: data.rawText, start: data.start }
-        : null;
-      state.currentActivityUpdatedAt = remoteUpdatedAt;
-      saveState();
-      renderAll();
-    }catch(e){ /* offline or Worker unreachable — local state is unaffected */ }
   }
 
   async function hydrateHistoryFromCloud(){
@@ -483,39 +378,22 @@
 
   function renderLaps(){
     const list = document.getElementById("lapsList");
-    const timeline = buildDayTimeline(state.todayKey);
-    if(timeline.length === 0){
+    const log = todayLog().slice().reverse();
+    if(log.length === 0){
       list.innerHTML = `<div class="empty-state">No activities logged yet today.</div>`;
       return;
     }
-    const dayEndBound = state.currentActivity ? state.currentActivity.start : Date.now();
-    list.innerHTML = "";
-    timeline.slice().reverse().forEach(function(entry){
-      const orderIdx = timeline.indexOf(entry);
-      const nextEntry = timeline[orderIdx + 1];
-      const isTrailingGap = entry.isGap && !nextEntry;
-
-      const cls = entry.isGap ? "gap" : (entry.tag || "");
-      const tagText = entry.isGap ? "Unaccounted — tap to fill" : (entry.tag ? TAG_LABEL[entry.tag] : "Untagged — tap to edit");
-      const nameHtml = entry.isGap ? "❓ Unaccounted" : escapeHtml(entry.name);
-
-      const div = document.createElement("div");
-      div.className = "lap-item " + cls;
-      div.innerHTML = `<div class="lap-main">
-          <div class="lap-name">${nameHtml}</div>
-          <div class="lap-meta">${fmtTime(entry.start)} – ${fmtTime(entry.end)} · ${tagText}</div>
+    list.innerHTML = log.map(function(lap){
+      const cls = lap.tag || "";
+      const tagText = lap.tag ? TAG_LABEL[lap.tag] : "Untagged";
+      return `<div class="lap-item ${cls}">
+        <div class="lap-main">
+          <div class="lap-name">${escapeHtml(lap.name)}</div>
+          <div class="lap-meta">${fmtTime(lap.start)} – ${fmtTime(lap.end)} · ${tagText}</div>
         </div>
-        <div class="lap-duration">${fmtHM(entry.duration)}</div>`;
-      div.addEventListener("click", function(){
-        // The trailing gap's end keeps moving forward in real time, so
-        // recompute it fresh at click time rather than using the stale
-        // value captured when the list was last rendered.
-        const liveEnd = isTrailingGap ? (state.currentActivity ? state.currentActivity.start : Date.now()) : entry.end;
-        const liveMaxEnd = isTrailingGap ? liveEnd : nextEntry ? nextEntry.start : dayEndBound;
-        openEntryEditor(state.todayKey, entry.start, liveEnd, entry.isGap ? null : entry, liveMaxEnd);
-      });
-      list.appendChild(div);
-    });
+        <div class="lap-duration">${fmtHM(lap.duration)}</div>
+      </div>`;
+    }).join("");
   }
   function escapeHtml(s){
     return s.replace(/[&<>"']/g, function(c){
@@ -530,17 +408,13 @@
     if(!state.currentActivity) return;
     const dur = now - state.currentActivity.start;
     todayLog().push(Object.assign({}, state.currentActivity, {
-      id: state.currentActivity.id || uid(), end: now, duration: dur
+      id: uid(), end: now, duration: dur
     }));
     state.currentActivity = null;
-    state.currentActivityUpdatedAt = Date.now();
-    syncCurrentActivityToCloud();
   }
 
   function startNewActivity(parsed, now){
-    state.currentActivity = { id: uid(), name: parsed.name, tag: parsed.tag, rawText: parsed.rawText, start: now };
-    state.currentActivityUpdatedAt = Date.now();
-    syncCurrentActivityToCloud();
+    state.currentActivity = { name: parsed.name, tag: parsed.tag, rawText: parsed.rawText, start: now };
   }
 
   function handleConfirmedText(text, mode){
@@ -700,8 +574,6 @@
 
   function openVoiceSheet(mode){
     pendingMode = mode;
-    document.getElementById("entryEditTimeRow").classList.add("hidden");
-    document.getElementById("btnDeleteEntry").classList.add("hidden");
     document.getElementById("transcriptBox").value = "";
     document.getElementById("parsedPreview").innerHTML = "";
     document.getElementById("voiceOverlay").classList.remove("hidden");
@@ -710,64 +582,7 @@
   }
   function closeVoiceSheet(){
     document.getElementById("voiceOverlay").classList.add("hidden");
-    document.getElementById("entryEditTimeRow").classList.add("hidden");
-    document.getElementById("btnDeleteEntry").classList.add("hidden");
     if(mediaStream){ try{ stopRecordingToBase64(); }catch(e){} }
-  }
-
-  // ---- Entry editor: fills a gap or edits an existing entry. Reuses the same
-  // voice sheet as Start/Lap (one recording pipeline, one Confirm/Re-record
-  // flow) instead of a second parallel UI, so this stays centralized.
-  let editEntryDayKey = null, editEntryStart = null, editEntryMaxEnd = null, editEntryExistingId = null;
-
-  function openEntryEditor(dayKey, startMs, endMs, existingEntry, maxEndMs){
-    pendingMode = "edit";
-    editEntryDayKey = dayKey;
-    editEntryStart = startMs;
-    editEntryMaxEnd = maxEndMs;
-    editEntryExistingId = existingEntry ? existingEntry.id : null;
-
-    document.getElementById("entryEditTimeRow").classList.remove("hidden");
-    document.getElementById("entryEditStartLabel").textContent = fmtTime(startMs);
-    const endInput = document.getElementById("entryEditEndInput");
-    endInput.value = msToTimeValue(endMs);
-    endInput.min = msToTimeValue(Math.min(startMs + 60000, endMs));
-    endInput.max = msToTimeValueClamped(maxEndMs, dayKey);
-
-    document.getElementById("transcriptBox").value = existingEntry ? (existingEntry.rawText || existingEntry.name) : "";
-    document.getElementById("parsedPreview").innerHTML = "";
-    updateParsedPreview();
-    document.getElementById("btnDeleteEntry").classList.toggle("hidden", !existingEntry);
-    document.getElementById("voiceOverlay").classList.remove("hidden");
-    showReviewActions();
-  }
-
-  // Returns true if it reopened the editor for leftover (split) time, in which
-  // case the caller should NOT close the sheet.
-  function handleEntryEditConfirmed(text){
-    const parsed = parseVoiceText(text);
-    if(!parsed.name) return false;
-    const endInput = document.getElementById("entryEditEndInput");
-    const chosenEnd = timeValueToMs(editEntryDayKey, endInput.value);
-    const actualEnd = Math.min(editEntryMaxEnd, Math.max(editEntryStart + 1000, chosenEnd));
-
-    const entry = {
-      id: editEntryExistingId || uid(),
-      name: parsed.name,
-      tag: parsed.tag,
-      rawText: parsed.rawText,
-      start: editEntryStart,
-      end: actualEnd,
-      duration: actualEnd - editEntryStart
-    };
-    upsertLogEntry(editEntryDayKey, entry);
-    renderAll();
-
-    if(actualEnd < editEntryMaxEnd - 60000){
-      openEntryEditor(editEntryDayKey, actualEnd, editEntryMaxEnd, null, editEntryMaxEnd);
-      return true;
-    }
-    return false;
   }
 
   document.getElementById("btnStart").addEventListener("click", function(){ openVoiceSheet("start"); });
@@ -781,19 +596,7 @@
   document.getElementById("btnConfirm").addEventListener("click", function(){
     const text = document.getElementById("transcriptBox").value;
     if(!text.trim()) return;
-    if(pendingMode === "edit"){
-      const continued = handleEntryEditConfirmed(text);
-      if(!continued) closeVoiceSheet();
-    } else {
-      handleConfirmedText(text, pendingMode);
-      closeVoiceSheet();
-    }
-  });
-  document.getElementById("btnDeleteEntry").addEventListener("click", function(){
-    if(editEntryExistingId){
-      deleteLogEntry(editEntryDayKey, editEntryExistingId);
-      renderAll();
-    }
+    handleConfirmedText(text, pendingMode);
     closeVoiceSheet();
   });
 
@@ -934,11 +737,6 @@
   tick();
   setInterval(tick, 1000);
   hydrateHistoryFromCloud();
-  pollCurrentActivityFromCloud();
-  setInterval(pollCurrentActivityFromCloud, 20000);
-  document.addEventListener("visibilitychange", function(){
-    if(document.visibilityState === "visible") pollCurrentActivityFromCloud();
-  });
 
 })();
 </script>
