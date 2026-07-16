@@ -5,13 +5,15 @@
 // "null" covers local file:// testing (browsers send Origin: null for those requests).
 const ALLOWED_ORIGINS = ["https://smworkassistance.github.io", "null"];
 
-const GOAL_CONTEXT = `
-Videh's goals, for judging activity alignment:
-- CLAR: a mind-management app — his personal calling. Building/improving it, or learning that feeds it, is HIGH alignment.
-- Shreemant: operational excellence, construction project, business growth. Store/construction/business work is HIGH alignment.
-- Long-term goal: financial independence via a self-running business, eventually helping people manage their minds.
-- Meetings, admin, employee coordination = usually NECESSARY, not high/low.
-- Scrolling, random browsing, procrastination = usually WASTE, unless explicitly tied to research for CLAR/Shreemant.
+// Generic productivity heuristics -- no personal goal/project context baked
+// in here. The tag the user speaks is always the real signal; this only
+// covers the fallback case where they forgot to say one.
+const PRODUCTIVITY_HEURISTICS = `
+General guidance for classifying an activity when no tag was spoken:
+- Focused/deep work, learning, skill-building → USEFUL
+- Meetings, admin, coordination, replying to people, errands → NECESSARY
+- Scrolling, random browsing, entertainment, procrastination → WASTE
+- Activities that are a mix of the above, or genuinely unclear → SEMI-USEFUL
 `.trim();
 
 function corsHeaders(origin) {
@@ -82,12 +84,12 @@ async function handleInsights(request, env) {
 
   const taggable = activities.filter((a) => a.id);
   const classifyBlock = taggable.length
-    ? `\nFor EACH activity below, determine the correct tag by understanding what the user actually said (raw_text), not just the quick local guess shown as "current tag". The user may state the tag in English, Hindi, or Hinglish (e.g. "useful"/"upyogi", "necessary"/"zaroori", "waste"/"faltu"/"bekaar"/"time waste", "semi-useful"). If they clearly stated a tag in any of these forms, use exactly that — even if it differs from or contradicts the current tag, which came from a simple keyword matcher that often misses non-English phrasing. If they did NOT state any tag at all, classify it yourself using the goal context above. Always output exactly one classification per activity id listed here, even when it just confirms the current tag.\nActivities:\n${taggable.map((a) => `- id "${a.id}": said "${a.rawText || a.name}" (current tag: ${a.tag || "none"})`).join("\n")}\n`
+    ? `\nFor EACH activity below, determine the correct tag by understanding what the user actually said (raw_text), not just the quick local guess shown as "current tag". The user may state the tag in English, Hindi, or Hinglish (e.g. "useful"/"upyogi", "necessary"/"zaroori", "waste"/"faltu"/"bekaar"/"time waste", "semi-useful"). If they clearly stated a tag in any of these forms, use exactly that — even if it differs from or contradicts the current tag, which came from a simple keyword matcher that often misses non-English phrasing. If they did NOT state any tag at all, classify it using the general guidance below. Always output exactly one classification per activity id listed here, even when it just confirms the current tag.\nActivities:\n${taggable.map((a) => `- id "${a.id}": said "${a.rawText || a.name}" (current tag: ${a.tag || "none"})`).join("\n")}\n`
     : "";
 
   const prompt = `
 You are analyzing a personal time-tracking log for ${dateLabel || "today"}.
-${GOAL_CONTEXT}
+${PRODUCTIVITY_HEURISTICS}
 
 Total day elapsed so far: ${Math.round((dayElapsedMs || 0) / 60000)} minutes.
 ${sleepMs ? `Of that, ${Math.round(sleepMs / 60000)} minutes is normal 12am-6am sleep, already excluded from "unaccounted" time -- do NOT mention this as wasted, untracked, or something to explain.` : ""}
