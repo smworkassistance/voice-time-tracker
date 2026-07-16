@@ -215,6 +215,69 @@ async function handleHistory(request, env) {
   return json({ history }, 200, origin);
 }
 
+async function handleGetCurrent(request, env) {
+  const origin = request.headers.get("Origin");
+  const res = await fetch(
+    `${env.SUPABASE_URL}/rest/v1/voice_tracker_current_state?id=eq.singleton&select=*`,
+    {
+      headers: {
+        apikey: env.SUPABASE_SERVICE_KEY,
+        Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+      },
+    }
+  );
+  const rows = await res.json();
+  if (!res.ok) {
+    return json({ error: rows.message || "Supabase current-state fetch failed" }, 502, origin);
+  }
+  const row = rows[0];
+  if (!row) return json({ activityId: null, updatedAt: 0 }, 200, origin);
+  return json(
+    {
+      activityId: row.activity_id,
+      name: row.name,
+      tag: row.tag,
+      rawText: row.raw_text,
+      start: row.start_ms ? Number(row.start_ms) : null,
+      updatedAt: Number(row.updated_at) || 0,
+    },
+    200,
+    origin
+  );
+}
+
+async function handleSetCurrent(request, env) {
+  const origin = request.headers.get("Origin");
+  const body = await request.json();
+  const { activityId, name, tag, rawText, start, updatedAt } = body;
+
+  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/voice_tracker_current_state?on_conflict=id`, {
+    method: "POST",
+    headers: {
+      apikey: env.SUPABASE_SERVICE_KEY,
+      Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: "resolution=merge-duplicates,return=minimal",
+    },
+    body: JSON.stringify([
+      {
+        id: "singleton",
+        activity_id: activityId || null,
+        name: name || null,
+        tag: tag || null,
+        raw_text: rawText || null,
+        start_ms: start || null,
+        updated_at: updatedAt || Date.now(),
+      },
+    ]),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    return json({ error: err.message || "Supabase current-state upsert failed" }, 502, origin);
+  }
+  return json({ ok: true }, 200, origin);
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin");
@@ -235,6 +298,12 @@ export default {
       }
       if (request.method === "GET" && url.pathname === "/history") {
         return await handleHistory(request, env);
+      }
+      if (request.method === "GET" && url.pathname === "/current") {
+        return await handleGetCurrent(request, env);
+      }
+      if (request.method === "POST" && url.pathname === "/current") {
+        return await handleSetCurrent(request, env);
       }
     } catch (err) {
       return json({ error: err.message || "Unexpected error" }, 500, origin);
