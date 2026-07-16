@@ -280,6 +280,61 @@ async function handleSetCurrent(request, env) {
   return json({ ok: true }, 200, origin);
 }
 
+async function handleClusterActivities(request, env) {
+  const origin = request.headers.get("Origin");
+  const body = await request.json();
+  const { names } = body;
+  if (!Array.isArray(names) || names.length === 0) {
+    return json({ clusters: [] }, 200, origin);
+  }
+
+  const nameList = names.map((n, i) => `${i + 1}. "${n}"`).join("\n");
+
+  const prompt = `
+Here is a list of distinct activity names from a personal voice-logged time-tracking app. Different phrasings, capitalizations, continuations, or Hindi/Hinglish variants often refer to the SAME real-world recurring activity (e.g. "CLAR work", "CLAR work continue", "clar kaam" are likely the same thing).
+
+Group these into clusters of the same real-world activity. Every name must appear in exactly one cluster, including names that are unique (a cluster of one is fine).
+
+Names:
+${nameList}
+
+Respond ONLY with JSON in this exact shape:
+{
+  "clusters": [
+    { "label": "<short canonical name for this recurring activity>", "members": ["<exact name from the list above>", ...] },
+    ...
+  ]
+}
+`.trim();
+
+  const geminiRes = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${env.GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: "application/json" },
+      }),
+    }
+  );
+
+  const geminiData = await geminiRes.json();
+  if (!geminiRes.ok) {
+    return json({ error: geminiData.error?.message || "Gemini request failed" }, 502, origin);
+  }
+
+  const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    return json({ error: "Gemini returned unparseable output", raw: text }, 502, origin);
+  }
+
+  return json({ clusters: parsed.clusters || [] }, 200, origin);
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin");
@@ -306,6 +361,9 @@ export default {
       }
       if (request.method === "POST" && url.pathname === "/current") {
         return await handleSetCurrent(request, env);
+      }
+      if (request.method === "POST" && url.pathname === "/cluster-activities") {
+        return await handleClusterActivities(request, env);
       }
     } catch (err) {
       return json({ error: err.message || "Unexpected error" }, 500, origin);

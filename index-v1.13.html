@@ -1,0 +1,1250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Voice Time Tracker</title>
+<style>
+  :root{
+    --bg:#000; --panel:#1c1c1e; --panel2:#2c2c2e; --text:#f5f5f7; --sub:#8e8e93;
+    --useful:#34c759; --necessary:#ff9500; --waste:#ff3b30; --semi:#5ac8fa; --unset:#8e8e93;
+    --accent:#0a84ff; --danger:#ff3b30;
+  }
+  html[data-theme="light"]{
+    --bg:#f2f2f7; --panel:#ffffff; --panel2:#e5e5ea; --text:#1c1c1e; --sub:#6e6e73;
+    --accent:#007aff;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; padding:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;
+    height:100%; overflow-x:hidden;}
+  #app{max-width:480px; margin:0 auto; min-height:100vh; display:flex; flex-direction:column; padding:14px 16px 40px;}
+
+  .topbar{display:flex; gap:10px; margin-bottom:18px;}
+  .timebox{flex:1; background:var(--panel); border-radius:16px; padding:12px 14px;}
+  .timebox .label{font-size:11px; color:var(--sub); text-transform:uppercase; letter-spacing:.5px;}
+  .timebox .remaining{font-size:20px; font-weight:600; margin-top:2px;}
+  .timebox .elapsed{font-size:12px; color:var(--sub); margin-top:2px;}
+
+  .activity-card{background:var(--panel); border-radius:24px; padding:28px 20px; text-align:center; margin-bottom:18px;}
+  .activity-name{font-size:15px; color:var(--sub); min-height:20px; word-break:break-word;}
+  .activity-tag-badge{display:inline-block; margin-top:6px; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.4px;}
+  .activity-elapsed{font-size:52px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:10px; letter-spacing:1px;}
+  .activity-idle{color:var(--sub); font-size:18px; margin-top:14px;}
+
+  .btn-row{display:flex; gap:12px; margin-bottom:18px;}
+  button{border:none; cursor:pointer; font-family:inherit;}
+  .btn{flex:1; padding:18px 10px; border-radius:18px; font-size:16px; font-weight:600; color:#fff; display:flex; align-items:center; justify-content:center; gap:8px; transition:transform .1s;}
+  .btn:active{transform:scale(.96);}
+  .btn-start{background:var(--useful);}
+  .btn-lap{background:var(--accent);}
+  .btn-stop{background:var(--panel2); color:var(--text);}
+  .btn-endday{background:var(--panel2); color:var(--text);}
+  .btn:disabled{opacity:.35; cursor:not-allowed;}
+  .btn .ic{font-size:18px;}
+
+  .laps-header{display:flex; justify-content:space-between; align-items:center; margin:6px 0 8px;}
+  .laps-header h3{font-size:13px; color:var(--sub); text-transform:uppercase; letter-spacing:.5px; font-weight:600; margin:0;}
+  .undo-link{font-size:13px; color:var(--accent); background:none;}
+
+  .lap-item{display:flex; align-items:center; background:var(--panel); border-radius:14px; padding:12px 14px; margin-bottom:8px; border-left:4px solid var(--unset); cursor:pointer;}
+  .lap-item.useful{border-left-color:var(--useful);}
+  .lap-item.necessary{border-left-color:var(--necessary);}
+  .lap-item.waste{border-left-color:var(--waste);}
+  .lap-item.semi-useful{border-left-color:var(--semi);}
+  .lap-item.gap{border-left-style:dashed; opacity:.75;}
+  .lap-main{flex:1; min-width:0;}
+  .lap-name{font-size:15px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .lap-meta{font-size:12px; color:var(--sub); margin-top:2px;}
+  .lap-duration{font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; margin-left:10px; white-space:nowrap;}
+  .empty-state{color:var(--sub); text-align:center; font-size:14px; padding:30px 10px;}
+
+  /* Voice overlay */
+  .overlay{position:fixed; inset:0; background:rgba(0,0,0,.85); display:flex; align-items:flex-end; z-index:50;}
+  .overlay.hidden{display:none;}
+  .sheet{background:var(--panel); width:100%; max-width:480px; margin:0 auto; border-radius:24px 24px 0 0; padding:22px 20px 28px; animation:slideup .2s ease-out;}
+  @keyframes slideup{from{transform:translateY(30px); opacity:0;} to{transform:translateY(0); opacity:1;}}
+  .entry-edit-time{display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:14px; font-size:15px; font-weight:600;}
+  .entry-edit-time.hidden{display:none;}
+  .entry-edit-time input[type="time"]{background:var(--panel2); color:var(--text); border:none; border-radius:10px; padding:8px 10px; font-family:inherit; font-size:15px;}
+  .mic-pulse{width:64px; height:64px; border-radius:50%; background:var(--accent); margin:0 auto 16px; display:flex; align-items:center; justify-content:center; font-size:28px;}
+  .mic-pulse.listening{animation:pulse 1.2s infinite;}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(10,132,255,.5);} 70%{box-shadow:0 0 0 18px rgba(10,132,255,0);} 100%{box-shadow:0 0 0 0 rgba(10,132,255,0);}}
+  .sheet-status{text-align:center; color:var(--sub); font-size:13px; margin-bottom:14px;}
+  .transcript-box{width:100%; background:var(--panel2); border:none; border-radius:14px; color:var(--text); font-size:16px; padding:14px; min-height:70px; resize:none; font-family:inherit;}
+  .parsed-preview{display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;}
+  .parsed-chip{background:var(--panel2); border-radius:20px; padding:6px 12px; font-size:13px; color:var(--sub);}
+  .parsed-chip b{color:var(--text);}
+  .sheet-actions{display:flex; gap:10px; margin-top:16px;}
+  .sheet-actions.hidden{display:none;}
+  .sheet-actions .btn{padding:14px 10px; border-radius:14px; font-size:15px;}
+  .lang-toggle{position:absolute; top:16px; right:16px; background:none; color:var(--sub); font-size:12px; border:1px solid var(--panel2); padding:4px 10px; border-radius:12px;}
+  .theme-toggle{position:absolute; top:16px; right:78px; background:none; color:var(--sub); font-size:12px; border:1px solid var(--panel2); padding:4px 10px; border-radius:12px;}
+
+  .summary-overlay{position:fixed; inset:0; background:var(--bg); z-index:60; overflow-y:auto;}
+  .summary-overlay.hidden{display:none;}
+  .report-header{position:sticky; top:0; display:flex; align-items:center; justify-content:space-between; background:var(--bg); padding:14px 16px; border-bottom:1px solid var(--panel2); z-index:1;}
+  .report-header h1{font-size:16px; font-weight:700; margin:0;}
+  .report-back{background:none; color:var(--accent); font-size:16px; font-weight:600; padding:6px 4px;}
+  .report-header-spacer{width:52px;}
+  .summary-card{max-width:560px; margin:0 auto; padding:20px 20px 48px;}
+  .summary-date-row{display:flex; align-items:center; gap:10px; margin-bottom:18px;}
+  .summary-date-row input[type="date"]{flex:1; background:var(--panel2); color:var(--text); border:none; border-radius:10px; padding:10px; font-size:14px; font-family:inherit;}
+  .date-nav-btn{background:var(--panel2); color:var(--text); width:40px; height:40px; border-radius:10px; font-size:19px; flex-shrink:0;}
+  .summary-card h2{margin:0 0 16px; font-size:22px; font-weight:700;}
+  .score-card{background:var(--panel); border-radius:20px; padding:22px; text-align:center; margin-bottom:20px;}
+  .score-card .score-value{font-size:44px; font-weight:800; line-height:1;}
+  .score-card .score-label{font-size:12px; color:var(--sub); text-transform:uppercase; letter-spacing:.6px; margin-top:6px;}
+  .summary-row{display:flex; justify-content:space-between; padding:12px 4px; border-bottom:1px solid var(--panel2); font-size:15px;}
+  .summary-row .val{font-weight:600;}
+  .insights-section{margin-top:24px;}
+  .insights-section .section-label{font-size:12px; color:var(--sub); text-transform:uppercase; letter-spacing:.6px; font-weight:700; margin-bottom:10px;}
+  .insight-line{background:var(--panel); border-radius:14px; padding:12px 14px; margin-bottom:8px; font-size:14px; line-height:1.4;}
+
+  .heatmap-section{margin-top:28px; display:none;}
+  .heatmap-section.active{display:block;}
+  .heatmap-grid{display:grid; grid-template-columns:30px repeat(7, 1fr); gap:3px; margin-top:12px;}
+  .heatmap-cell{aspect-ratio:1; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:700; color:rgba(255,255,255,.9);}
+  .heatmap-cell.empty{background:var(--panel2); color:var(--sub); opacity:.45; font-weight:400;}
+  .heatmap-row-label{font-size:10px; color:var(--sub); display:flex; align-items:center; justify-content:flex-end; padding-right:4px;}
+  .heatmap-col-label{font-size:8px; color:var(--sub); text-align:center; line-height:1.2; padding-bottom:4px; align-self:end;}
+  .heatmap-legend{display:flex; align-items:center; gap:8px; margin-top:12px; font-size:11px; color:var(--sub);}
+  .heatmap-legend-bar{flex:1; height:8px; border-radius:4px; background:linear-gradient(to right, rgb(139,26,26), rgb(201,138,26), rgb(47,158,68));}
+  .heatmap-note{font-size:11px; color:var(--sub); margin-top:10px; line-height:1.4;}
+
+  .recurring-section{margin-top:28px; display:none;}
+  .recurring-section.active{display:block;}
+  .recurring-row{margin-bottom:14px;}
+  .recurring-label{font-size:13px; font-weight:600; margin-bottom:5px; display:flex; align-items:baseline; gap:6px;}
+  .recurring-count{font-size:11px; font-weight:400; color:var(--sub);}
+  .recurring-bar-track{background:var(--panel2); border-radius:8px; height:14px; overflow:hidden;}
+  .recurring-bar-fill{height:100%; border-radius:8px;}
+  .recurring-time{font-size:11px; color:var(--sub); margin-top:3px; text-align:right;}
+  .recurring-note{font-size:11px; color:var(--sub); margin-top:6px; line-height:1.4;}
+
+  .top-actions{position:relative;}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div class="top-actions">
+    <button class="theme-toggle" id="themeToggle">🌙</button>
+    <button class="lang-toggle" id="langToggle">EN-IN</button>
+  </div>
+
+  <div class="topbar">
+    <div class="timebox">
+      <div class="label">Day</div>
+      <div class="remaining" id="dayRemaining">--</div>
+      <div class="elapsed" id="dayElapsed">--</div>
+    </div>
+    <div class="timebox">
+      <div class="label">Week</div>
+      <div class="remaining" id="weekRemaining">--</div>
+      <div class="elapsed" id="weekElapsed">--</div>
+    </div>
+  </div>
+
+  <div class="activity-card">
+    <div class="activity-name" id="activityName">No activity yet</div>
+    <div id="activityTagWrap"></div>
+    <div class="activity-elapsed" id="activityElapsed">00:00:00</div>
+    <div class="activity-idle" id="activityIdleMsg">Tap Start and speak</div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-start" id="btnStart"><span class="ic">🎙️</span> Start</button>
+    <button class="btn btn-lap" id="btnLap" disabled><span class="ic">🎙️</span> Lap</button>
+  </div>
+  <div class="btn-row">
+    <button class="btn btn-stop" id="btnStop" disabled>Stop</button>
+    <button class="btn btn-endday" id="btnEndDay">End Day</button>
+  </div>
+
+  <div class="laps-header">
+    <h3>Today's Laps</h3>
+    <div style="display:flex; gap:14px;">
+      <button class="undo-link" id="btnReports">📊 Reports</button>
+      <button class="undo-link" id="btnUndo">Undo last</button>
+    </div>
+  </div>
+  <div id="lapsList"></div>
+
+</div>
+
+<!-- Voice overlay -->
+<div class="overlay hidden" id="voiceOverlay">
+  <div class="sheet">
+    <div class="entry-edit-time hidden" id="entryEditTimeRow">
+      <span id="entryEditStartLabel">--</span>
+      <span>–</span>
+      <input type="time" id="entryEditEndInput">
+    </div>
+    <div class="mic-pulse" id="micPulse">🎙️</div>
+    <div class="sheet-status" id="sheetStatus">Recording…</div>
+    <textarea class="transcript-box" id="transcriptBox" placeholder="Speak, then tap Done — or type here…"></textarea>
+    <div class="parsed-preview" id="parsedPreview"></div>
+    <div class="sheet-actions" id="recordingActions">
+      <button class="btn btn-start" id="btnDone" style="flex:1;">⏹ Done — Transcribe</button>
+    </div>
+    <div class="sheet-actions hidden" id="reviewActions">
+      <button class="btn btn-stop" id="btnRerecord" style="flex:1;">Re-record</button>
+      <button class="btn btn-start" id="btnConfirm" style="flex:1;">Confirm</button>
+    </div>
+    <button class="btn btn-stop hidden" id="btnDeleteEntry" style="width:100%; margin-top:10px;">Delete This Entry</button>
+  </div>
+</div>
+
+<!-- Reports: full-screen page -->
+<div class="summary-overlay hidden" id="summaryOverlay">
+  <div class="report-header">
+    <button class="report-back" id="summaryClose">‹ Back</button>
+    <h1>Reports</h1>
+    <div class="report-header-spacer"></div>
+  </div>
+  <div class="summary-card">
+    <div class="summary-date-row">
+      <button class="date-nav-btn" id="summaryPrevDay">‹</button>
+      <input type="date" id="summaryDateInput">
+      <button class="date-nav-btn" id="summaryNextDay">›</button>
+    </div>
+    <h2 id="summaryTitle">Today</h2>
+    <div id="summaryBody"></div>
+
+    <div class="heatmap-section" id="heatmapSection">
+      <div class="section-label">Focus Heatmap — When You're At Your Best</div>
+      <div class="heatmap-grid" id="heatmapGrid"></div>
+      <div class="heatmap-legend">
+        <span>Low</span>
+        <div class="heatmap-legend-bar"></div>
+        <span>High</span>
+      </div>
+      <div class="heatmap-note">Gaps in logging count as low marks here too — consistent tracking matters as much as what you tag.</div>
+    </div>
+
+    <div class="recurring-section" id="recurringSection">
+      <div class="section-label">Recurring Activities — Your Real Habits</div>
+      <div id="recurringList"></div>
+      <div class="recurring-note">Similar-sounding entries (different phrasing, Hindi/Hinglish variants) are grouped together by AI.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // Cloudflare Worker base URL.
+  const API_BASE = "https://orange-violet-75d5.smworkassistance.workers.dev";
+
+  const STORAGE_KEY = "vtt_state_v1";
+  const TAG_KEYWORDS = [
+    {tag:"waste", words:["time waste","waste of time","waste"]},
+    {tag:"semi-useful", words:["semi useful","semi-useful"]},
+    {tag:"necessary", words:["necessary but unplanned","necessary"]},
+    {tag:"useful", words:["useful"]}
+  ];
+  const TAG_LABEL = {useful:"Useful", necessary:"Necessary", waste:"Waste", "semi-useful":"Semi-useful"};
+
+  function todayKey(d){ d = d || new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+  function dayKeyToDate(dayKey){ const p = dayKey.split("-").map(Number); return new Date(p[0], p[1]-1, p[2]); }
+  function msToTimeValue(ms){ const d = new Date(ms); return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); }
+  function msToTimeValueClamped(ms, dayKey){
+    const dayStart = startOfDay(dayKeyToDate(dayKey)).getTime();
+    if(ms - dayStart >= 24*60*60*1000) return "23:59";
+    return msToTimeValue(ms);
+  }
+  function timeValueToMs(dayKey, value){
+    const parts = value.split(":").map(Number);
+    const d = dayKeyToDate(dayKey);
+    d.setHours(parts[0]||0, parts[1]||0, 0, 0);
+    return d.getTime();
+  }
+  function startOfDay(d){ const n = new Date(d); n.setHours(0,0,0,0); return n; }
+  function endOfDay(d){ const n = new Date(d); n.setHours(23,59,59,999); return n; }
+  function startOfWeek(d){ // Monday 00:00
+    const n = startOfDay(d); const day = n.getDay(); const diff = (day === 0 ? 6 : day - 1);
+    n.setDate(n.getDate() - diff); return n;
+  }
+  function fmtHM(ms){
+    if(ms < 0) ms = 0;
+    const totalMin = Math.floor(ms/60000);
+    const h = Math.floor(totalMin/60), m = totalMin%60;
+    if(h <= 0) return m + "m";
+    return h + "h " + m + "m";
+  }
+  function fmtHMS(ms){
+    if(ms < 0) ms = 0;
+    const s = Math.floor(ms/1000);
+    const hh = Math.floor(s/3600), mm = Math.floor((s%3600)/60), ss = s%60;
+    return String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0")+":"+String(ss).padStart(2,"0");
+  }
+  function fmtTime(d){
+    return new Date(d).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+  }
+  function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+
+  function defaultState(){
+    return { history:{}, currentActivity:null, currentActivityUpdatedAt:0, todayKey: todayKey(), lang:"en-IN", theme:"dark", insightsCache:{}, recurringCache:null };
+  }
+  function loadState(){
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if(!raw) return defaultState();
+      const s = JSON.parse(raw);
+      if(!s.history) s.history = {};
+      if(s.lang === undefined) s.lang = "en-IN";
+      if(s.theme === undefined) s.theme = "dark";
+      if(s.currentActivityUpdatedAt === undefined) s.currentActivityUpdatedAt = 0;
+      if(!s.insightsCache) s.insightsCache = {};
+      if(s.recurringCache === undefined) s.recurringCache = null;
+      return s;
+    }catch(e){ return defaultState(); }
+  }
+  function saveState(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+
+  let state = loadState();
+
+  function todayLog(){
+    if(!state.history[state.todayKey]) state.history[state.todayKey] = [];
+    return state.history[state.todayKey];
+  }
+
+  // Centralized log-entry storage: every mutation (live recording, editing a
+  // past entry, filling a gap) goes through these two, so persistence + cloud
+  // sync is handled in exactly one place regardless of which flow triggered it.
+  function upsertLogEntry(dayKey, entry){
+    if(!state.history[dayKey]) state.history[dayKey] = [];
+    const log = state.history[dayKey];
+    const idx = log.findIndex(function(l){ return l.id === entry.id; });
+    if(idx >= 0) log[idx] = entry; else log.push(entry);
+    log.sort(function(a,b){ return a.start - b.start; });
+    saveState();
+    syncDayToCloud(dayKey);
+  }
+  function deleteLogEntry(dayKey, id){
+    if(!state.history[dayKey]) return;
+    state.history[dayKey] = state.history[dayKey].filter(function(l){ return l.id !== id; });
+    saveState();
+    syncDayToCloud(dayKey);
+  }
+
+  // Full-day timeline: real logged entries plus synthetic "gap" entries filling
+  // every uncovered minute, so the log always accounts for the whole day.
+  function buildDayTimeline(dayKey){
+    const log = (state.history[dayKey] || []).slice().sort(function(a,b){ return a.start - b.start; });
+    const dayStart = startOfDay(dayKeyToDate(dayKey)).getTime();
+    const isToday = dayKey === state.todayKey;
+    const dayEnd = isToday
+      ? (state.currentActivity ? state.currentActivity.start : Date.now())
+      : dayStart + 24*60*60*1000;
+
+    const timeline = [];
+    let cursor = dayStart;
+    log.forEach(function(entry){
+      if(entry.start > cursor){
+        timeline.push({ id:null, name:"Unaccounted", tag:null, rawText:"", start:cursor, end:entry.start, duration:entry.start-cursor, isGap:true });
+      }
+      timeline.push(entry);
+      cursor = Math.max(cursor, entry.end);
+    });
+    if(cursor < dayEnd){
+      timeline.push({ id:null, name:"Unaccounted", tag:null, rawText:"", start:cursor, end:dayEnd, duration:dayEnd-cursor, isGap:true });
+    }
+    return timeline;
+  }
+
+  // ---- Cloud sync (Supabase, via the Worker) — best-effort, offline-friendly ----
+  // localStorage stays the source of truth; this is a fire-and-forget mirror so
+  // history survives a cleared browser / lets a new device recover past days.
+  function syncDayToCloud(dayKey){
+    fetch(API_BASE + "/sync", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ dayKey: dayKey, activities: state.history[dayKey] || [] })
+    }).catch(function(){ /* offline or Worker unreachable — ignore, local data is safe */ });
+  }
+
+  // Mirrors the LIVE running activity (not yet a finished lap) so another
+  // device can pick up "something is running" without waiting for it to end.
+  function syncCurrentActivityToCloud(){
+    const cur = state.currentActivity;
+    fetch(API_BASE + "/current", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        activityId: cur ? cur.id : null,
+        name: cur ? cur.name : null,
+        tag: cur ? cur.tag : null,
+        rawText: cur ? cur.rawText : null,
+        start: cur ? cur.start : null,
+        updatedAt: state.currentActivityUpdatedAt
+      })
+    }).catch(function(){ /* offline or Worker unreachable — local state is unaffected */ });
+  }
+
+  // Checks whether another device changed the running activity more recently
+  // than this one knows about, and if so, adopts that state.
+  async function pollCurrentActivityFromCloud(){
+    try{
+      const res = await fetch(API_BASE + "/current");
+      const data = await res.json();
+      if(!res.ok || data.error) return;
+      const remoteUpdatedAt = data.updatedAt || 0;
+      if(remoteUpdatedAt <= (state.currentActivityUpdatedAt || 0)) return;
+
+      state.currentActivity = data.activityId
+        ? { id: data.activityId, name: data.name, tag: data.tag, rawText: data.rawText, start: data.start }
+        : null;
+      state.currentActivityUpdatedAt = remoteUpdatedAt;
+      saveState();
+      renderAll();
+    }catch(e){ /* offline or Worker unreachable — local state is unaffected */ }
+  }
+
+  async function hydrateHistoryFromCloud(){
+    try{
+      const res = await fetch(API_BASE + "/history");
+      const data = await res.json();
+      if(!res.ok || data.error) return;
+      let changed = false;
+      Object.keys(data.history || {}).forEach(function(dayKey){
+        const cloudEntries = data.history[dayKey] || [];
+        const localEntries = state.history[dayKey];
+        if(!localEntries || localEntries.length === 0){
+          // No local data for this day (a fresh browser starts today as an
+          // empty array) — just take the cloud copy.
+          if(cloudEntries.length > 0){
+            state.history[dayKey] = cloudEntries;
+            changed = true;
+          }
+        } else {
+          // Merge by id so entries logged on another device/browser show up
+          // alongside ones already recorded locally, without duplicating.
+          const localIds = new Set(localEntries.map(function(e){ return e.id; }));
+          const merged = localEntries.slice();
+          cloudEntries.forEach(function(e){
+            if(!localIds.has(e.id)) merged.push(e);
+          });
+          if(merged.length !== localEntries.length){
+            merged.sort(function(a,b){ return a.start - b.start; });
+            state.history[dayKey] = merged;
+            changed = true;
+          }
+        }
+      });
+      if(changed){ saveState(); renderAll(); }
+    }catch(e){ /* offline or Worker unreachable — local data is unaffected */ }
+  }
+
+  // ---- Day-boundary rollover handling (edge case: midnight crossing, app closed) ----
+  function rolloverIfNeeded(){
+    const tk = todayKey();
+    if(tk === state.todayKey) return;
+
+    const closedDayKey = state.todayKey;
+    if(state.currentActivity){
+      const startDate = new Date(state.currentActivity.start);
+      const startDay = todayKey(startDate);
+      if(startDay === state.todayKey){
+        // Activity was running when the clock crossed midnight (or a single-day gap).
+        // Close it out at the end of the day it started on.
+        const boundary = endOfDay(startDate).getTime() + 1; // 00:00:00.000 next day
+        const closedDuration = boundary - state.currentActivity.start;
+        todayLog().push(Object.assign({}, state.currentActivity, {
+          id: uid(), end: boundary, duration: closedDuration
+        }));
+        // Continue same activity into the new day, but only if it's the very next day
+        // (app stayed open / reopened same-day gap). If multiple days passed, go idle instead.
+        const dayDiffMs = startOfDay(new Date()).getTime() - startOfDay(startDate).getTime();
+        const oneDay = 24*60*60*1000;
+        if(dayDiffMs <= oneDay){
+          state.currentActivity.start = startOfDay(new Date()).getTime();
+          // will be re-logged under the new day key below
+        } else {
+          state.currentActivity = null;
+        }
+      } else {
+        // Already spans further back somehow — just drop into idle to avoid bad data.
+        state.currentActivity = null;
+      }
+    }
+    state.todayKey = tk;
+    if(!state.history[tk]) state.history[tk] = [];
+    saveState();
+    syncDayToCloud(closedDayKey);
+  }
+
+  // ---- Tag parsing ----
+  function parseVoiceText(text){
+    const raw = text.trim();
+    const lower = raw.toLowerCase();
+
+    // Collect every keyword occurrence, then prefer the match ending furthest
+    // right (the tag is spoken last); ties go to the longer/earlier-starting
+    // phrase so "time waste" wins over the "waste" it contains.
+    let best = null;
+    for(const entry of TAG_KEYWORDS){
+      for(const w of entry.words){
+        const idx = lower.lastIndexOf(w);
+        if(idx === -1) continue;
+        const end = idx + w.length;
+        if(!best || end > best.end || (end === best.end && idx < best.idx)){
+          best = { tag: entry.tag, idx, end };
+        }
+      }
+    }
+
+    let name = raw;
+    if(best){
+      name = raw.slice(0, best.idx).replace(/[,\s]+$/,"").trim();
+    }
+    if(!name) name = raw;
+    return { name, tag: best ? best.tag : null, rawText: raw };
+  }
+
+  // ---- Timer display ----
+  function tick(){
+    const now = new Date();
+    rolloverIfNeeded();
+
+    const dayStart = startOfDay(now), dayEnd = endOfDay(now);
+    document.getElementById("dayRemaining").textContent = fmtHM(dayEnd - now + 1) + " left";
+    document.getElementById("dayElapsed").textContent = fmtHM(now - dayStart) + " elapsed";
+
+    const weekStart = startOfWeek(now);
+    const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate()+7);
+    document.getElementById("weekRemaining").textContent = fmtHM(weekEnd - now) + " left";
+    document.getElementById("weekElapsed").textContent = fmtHM(now - weekStart) + " elapsed";
+
+    if(state.currentActivity){
+      document.getElementById("activityElapsed").textContent = fmtHMS(now - state.currentActivity.start);
+    }
+  }
+
+  function renderActivityCard(){
+    const nameEl = document.getElementById("activityName");
+    const tagWrap = document.getElementById("activityTagWrap");
+    const idleMsg = document.getElementById("activityIdleMsg");
+    const cur = state.currentActivity;
+    if(cur){
+      nameEl.textContent = cur.name;
+      tagWrap.innerHTML = cur.tag
+        ? `<span class="activity-tag-badge" style="background:var(--${cur.tag});color:#000">${TAG_LABEL[cur.tag]}</span>`
+        : `<span class="activity-tag-badge" style="background:var(--unset);color:#000">Untagged</span>`;
+      idleMsg.style.display = "none";
+    } else {
+      nameEl.textContent = "No activity running";
+      tagWrap.innerHTML = "";
+      document.getElementById("activityElapsed").textContent = "00:00:00";
+      idleMsg.style.display = "block";
+    }
+    document.getElementById("btnStart").disabled = !!cur;
+    document.getElementById("btnLap").disabled = !cur;
+    document.getElementById("btnStop").disabled = !cur;
+  }
+
+  function renderLaps(){
+    const list = document.getElementById("lapsList");
+    const timeline = buildDayTimeline(state.todayKey);
+    if(timeline.length === 0){
+      list.innerHTML = `<div class="empty-state">No activities logged yet today.</div>`;
+      return;
+    }
+    const dayEndBound = state.currentActivity ? state.currentActivity.start : Date.now();
+    list.innerHTML = "";
+    timeline.slice().reverse().forEach(function(entry){
+      const orderIdx = timeline.indexOf(entry);
+      const nextEntry = timeline[orderIdx + 1];
+      const isTrailingGap = entry.isGap && !nextEntry;
+
+      const cls = entry.isGap ? "gap" : (entry.tag || "");
+      const tagText = entry.isGap ? "Unaccounted — tap to fill" : (entry.tag ? TAG_LABEL[entry.tag] : "Untagged — tap to edit");
+      const nameHtml = entry.isGap ? "❓ Unaccounted" : escapeHtml(entry.name);
+
+      const div = document.createElement("div");
+      div.className = "lap-item " + cls;
+      div.innerHTML = `<div class="lap-main">
+          <div class="lap-name">${nameHtml}</div>
+          <div class="lap-meta">${fmtTime(entry.start)} – ${fmtTime(entry.end)} · ${tagText}</div>
+        </div>
+        <div class="lap-duration">${fmtHM(entry.duration)}</div>`;
+      div.addEventListener("click", function(){
+        // The trailing gap's end keeps moving forward in real time, so
+        // recompute it fresh at click time rather than using the stale
+        // value captured when the list was last rendered.
+        const liveEnd = isTrailingGap ? (state.currentActivity ? state.currentActivity.start : Date.now()) : entry.end;
+        const liveMaxEnd = isTrailingGap ? liveEnd : nextEntry ? nextEntry.start : dayEndBound;
+        openEntryEditor(state.todayKey, entry.start, liveEnd, entry.isGap ? null : entry, liveMaxEnd);
+      });
+      list.appendChild(div);
+    });
+  }
+  function escapeHtml(s){
+    return s.replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+
+  function renderAll(){ renderActivityCard(); renderLaps(); }
+
+  // ---- Lap/start logic ----
+  function closeCurrentActivity(now){
+    if(!state.currentActivity) return;
+    const dur = now - state.currentActivity.start;
+    todayLog().push(Object.assign({}, state.currentActivity, {
+      id: state.currentActivity.id || uid(), end: now, duration: dur
+    }));
+    state.currentActivity = null;
+    state.currentActivityUpdatedAt = Date.now();
+    syncCurrentActivityToCloud();
+  }
+
+  function startNewActivity(parsed, now){
+    state.currentActivity = { id: uid(), name: parsed.name, tag: parsed.tag, rawText: parsed.rawText, start: now };
+    state.currentActivityUpdatedAt = Date.now();
+    syncCurrentActivityToCloud();
+  }
+
+  function handleConfirmedText(text, mode){
+    const parsed = parseVoiceText(text);
+    if(!parsed.name){ return; }
+    const now = Date.now();
+    if(mode === "lap" && state.currentActivity){
+      closeCurrentActivity(now);
+    }
+    startNewActivity(parsed, now);
+    saveState();
+    renderAll();
+    syncDayToCloud(state.todayKey);
+  }
+
+  // ---- Voice capture: raw PCM via Web Audio API, transcribed by a cloud STT
+  // backend (Worker). This works identically on Safari/iOS, unlike the old
+  // Web Speech API approach which iOS Safari doesn't implement at all.
+  let pendingMode = null; // "start" | "lap"
+  let audioCtx = null, mediaStream = null, sourceNode = null, processorNode = null, pcmChunks = [];
+
+  function setSheetStatus(msg){ document.getElementById("sheetStatus").textContent = msg; }
+
+  function updateParsedPreview(){
+    const text = document.getElementById("transcriptBox").value;
+    const preview = document.getElementById("parsedPreview");
+    if(!text.trim()){ preview.innerHTML = ""; return; }
+    const parsed = parseVoiceText(text);
+    preview.innerHTML =
+      `<div class="parsed-chip">Activity: <b>${escapeHtml(parsed.name || "—")}</b></div>` +
+      `<div class="parsed-chip">Tag: <b>${parsed.tag ? TAG_LABEL[parsed.tag] : "none (AI will classify later)"}</b></div>`;
+  }
+
+  function showRecordingActions(){
+    document.getElementById("recordingActions").classList.remove("hidden");
+    document.getElementById("reviewActions").classList.add("hidden");
+    document.getElementById("btnDone").disabled = false;
+  }
+  function showReviewActions(){
+    document.getElementById("recordingActions").classList.add("hidden");
+    document.getElementById("reviewActions").classList.remove("hidden");
+  }
+
+  async function beginRecording(){
+    pcmChunks = [];
+    try{
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    }catch(e){
+      setSheetStatus("Mic access denied — you can type the activity below instead.");
+      showReviewActions();
+      return;
+    }
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    sourceNode = audioCtx.createMediaStreamSource(mediaStream);
+    processorNode = audioCtx.createScriptProcessor(4096, 1, 1);
+    const silentGain = audioCtx.createGain();
+    silentGain.gain.value = 0;
+    processorNode.onaudioprocess = function(e){
+      pcmChunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+    };
+    sourceNode.connect(processorNode);
+    processorNode.connect(silentGain);
+    silentGain.connect(audioCtx.destination);
+    document.getElementById("micPulse").classList.add("listening");
+    setSheetStatus("Recording… tap Done when finished.");
+  }
+
+  function mergeFloat32(chunks){
+    let total = 0;
+    chunks.forEach(function(c){ total += c.length; });
+    const result = new Float32Array(total);
+    let offset = 0;
+    chunks.forEach(function(c){ result.set(c, offset); offset += c.length; });
+    return result;
+  }
+  function downsampleTo16k(samples, originalRate){
+    if(originalRate === 16000) return samples;
+    const ratio = originalRate / 16000;
+    const newLength = Math.round(samples.length / ratio);
+    const result = new Float32Array(newLength);
+    for(let i=0;i<newLength;i++){
+      result[i] = samples[Math.min(samples.length - 1, Math.round(i * ratio))];
+    }
+    return result;
+  }
+  function encodeWavPCM16(samples, sampleRate){
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+    function writeString(offset, str){ for(let i=0;i<str.length;i++) view.setUint8(offset + i, str.charCodeAt(i)); }
+    writeString(0, "RIFF");
+    view.setUint32(4, 36 + samples.length * 2, true);
+    writeString(8, "WAVE");
+    writeString(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, "data");
+    view.setUint32(40, samples.length * 2, true);
+    let offset = 44;
+    for(let i=0;i<samples.length;i++){
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      offset += 2;
+    }
+    return buffer;
+  }
+  function arrayBufferToBase64(buffer){
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const chunkSize = 0x8000;
+    for(let i=0;i<bytes.length;i+=chunkSize){
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
+  }
+
+  function stopRecordingToBase64(){
+    if(!mediaStream){ return null; }
+    mediaStream.getTracks().forEach(function(t){ t.stop(); });
+    if(processorNode) processorNode.disconnect();
+    if(sourceNode) sourceNode.disconnect();
+    const originalRate = audioCtx ? audioCtx.sampleRate : 16000;
+    const merged = mergeFloat32(pcmChunks);
+    const resampled = downsampleTo16k(merged, originalRate);
+    const wavBuffer = encodeWavPCM16(resampled, 16000);
+    if(audioCtx) audioCtx.close();
+    mediaStream = null; audioCtx = null; sourceNode = null; processorNode = null;
+    return arrayBufferToBase64(wavBuffer);
+  }
+
+  async function finishRecordingAndTranscribe(){
+    document.getElementById("micPulse").classList.remove("listening");
+    document.getElementById("btnDone").disabled = true;
+    setSheetStatus("Transcribing…");
+    const base64 = stopRecordingToBase64();
+    if(!base64){ setSheetStatus("No recording captured — type below."); showReviewActions(); return; }
+    try{
+      const res = await fetch(API_BASE + "/transcribe", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ audioBase64: base64, sampleRateHertz: 16000, languageCode: state.lang })
+      });
+      const data = await res.json();
+      if(!res.ok || data.error) throw new Error(data.error || "Transcription failed");
+      document.getElementById("transcriptBox").value = data.transcript || "";
+      updateParsedPreview();
+      setSheetStatus(data.transcript ? "Review and confirm, or edit." : "Didn't catch that — type it below.");
+    }catch(e){
+      setSheetStatus("Couldn't reach transcription service — type the activity below.");
+    }
+    showReviewActions();
+  }
+
+  function openVoiceSheet(mode){
+    pendingMode = mode;
+    document.getElementById("entryEditTimeRow").classList.add("hidden");
+    document.getElementById("btnDeleteEntry").classList.add("hidden");
+    document.getElementById("transcriptBox").value = "";
+    document.getElementById("parsedPreview").innerHTML = "";
+    document.getElementById("voiceOverlay").classList.remove("hidden");
+    showRecordingActions();
+    beginRecording();
+  }
+  function closeVoiceSheet(){
+    document.getElementById("voiceOverlay").classList.add("hidden");
+    document.getElementById("entryEditTimeRow").classList.add("hidden");
+    document.getElementById("btnDeleteEntry").classList.add("hidden");
+    if(mediaStream){ try{ stopRecordingToBase64(); }catch(e){} }
+  }
+
+  // ---- Entry editor: fills a gap or edits an existing entry. Reuses the same
+  // voice sheet as Start/Lap (one recording pipeline, one Confirm/Re-record
+  // flow) instead of a second parallel UI, so this stays centralized.
+  let editEntryDayKey = null, editEntryStart = null, editEntryMaxEnd = null, editEntryExistingId = null;
+
+  function openEntryEditor(dayKey, startMs, endMs, existingEntry, maxEndMs){
+    pendingMode = "edit";
+    editEntryDayKey = dayKey;
+    editEntryStart = startMs;
+    editEntryMaxEnd = maxEndMs;
+    editEntryExistingId = existingEntry ? existingEntry.id : null;
+
+    document.getElementById("entryEditTimeRow").classList.remove("hidden");
+    document.getElementById("entryEditStartLabel").textContent = fmtTime(startMs);
+    const endInput = document.getElementById("entryEditEndInput");
+    endInput.value = msToTimeValue(endMs);
+    endInput.min = msToTimeValue(Math.min(startMs + 60000, endMs));
+    endInput.max = msToTimeValueClamped(maxEndMs, dayKey);
+
+    document.getElementById("transcriptBox").value = existingEntry ? (existingEntry.rawText || existingEntry.name) : "";
+    document.getElementById("parsedPreview").innerHTML = "";
+    updateParsedPreview();
+    document.getElementById("btnDeleteEntry").classList.toggle("hidden", !existingEntry);
+    document.getElementById("voiceOverlay").classList.remove("hidden");
+    showReviewActions();
+  }
+
+  // Returns true if it reopened the editor for leftover (split) time, in which
+  // case the caller should NOT close the sheet.
+  function handleEntryEditConfirmed(text){
+    const parsed = parseVoiceText(text);
+    if(!parsed.name) return false;
+    const endInput = document.getElementById("entryEditEndInput");
+    const chosenEnd = timeValueToMs(editEntryDayKey, endInput.value);
+    const actualEnd = Math.min(editEntryMaxEnd, Math.max(editEntryStart + 1000, chosenEnd));
+
+    const entry = {
+      id: editEntryExistingId || uid(),
+      name: parsed.name,
+      tag: parsed.tag,
+      rawText: parsed.rawText,
+      start: editEntryStart,
+      end: actualEnd,
+      duration: actualEnd - editEntryStart
+    };
+    upsertLogEntry(editEntryDayKey, entry);
+    renderAll();
+
+    if(actualEnd < editEntryMaxEnd - 60000){
+      openEntryEditor(editEntryDayKey, actualEnd, editEntryMaxEnd, null, editEntryMaxEnd);
+      return true;
+    }
+    return false;
+  }
+
+  document.getElementById("btnStart").addEventListener("click", function(){ openVoiceSheet("start"); });
+  document.getElementById("btnLap").addEventListener("click", function(){ openVoiceSheet("lap"); });
+  document.getElementById("btnDone").addEventListener("click", finishRecordingAndTranscribe);
+  document.getElementById("btnRerecord").addEventListener("click", function(){
+    showRecordingActions();
+    beginRecording();
+  });
+  document.getElementById("transcriptBox").addEventListener("input", updateParsedPreview);
+  document.getElementById("btnConfirm").addEventListener("click", function(){
+    const text = document.getElementById("transcriptBox").value;
+    if(!text.trim()) return;
+    if(pendingMode === "edit"){
+      const continued = handleEntryEditConfirmed(text);
+      if(!continued) closeVoiceSheet();
+    } else {
+      handleConfirmedText(text, pendingMode);
+      closeVoiceSheet();
+    }
+  });
+  document.getElementById("btnDeleteEntry").addEventListener("click", function(){
+    if(editEntryExistingId){
+      deleteLogEntry(editEntryDayKey, editEntryExistingId);
+      renderAll();
+    }
+    closeVoiceSheet();
+  });
+
+  document.getElementById("btnStop").addEventListener("click", function(){
+    closeCurrentActivity(Date.now());
+    saveState();
+    renderAll();
+    syncDayToCloud(state.todayKey);
+  });
+
+  document.getElementById("btnUndo").addEventListener("click", function(){
+    const log = todayLog();
+    if(log.length === 0) return;
+    log.pop();
+    saveState();
+    renderAll();
+    syncDayToCloud(state.todayKey);
+  });
+
+  document.getElementById("langToggle").addEventListener("click", function(){
+    state.lang = state.lang === "en-IN" ? "hi-IN" : "en-IN";
+    document.getElementById("langToggle").textContent = state.lang.toUpperCase();
+    saveState();
+  });
+  document.getElementById("langToggle").textContent = state.lang.toUpperCase();
+
+  function applyTheme(){
+    document.documentElement.setAttribute("data-theme", state.theme);
+    document.getElementById("themeToggle").textContent = state.theme === "dark" ? "🌙" : "☀️";
+  }
+  document.getElementById("themeToggle").addEventListener("click", function(){
+    state.theme = state.theme === "dark" ? "light" : "dark";
+    applyTheme();
+    saveState();
+  });
+  applyTheme();
+
+  // ---- Reports (full-screen) ----
+  document.getElementById("btnEndDay").addEventListener("click", function(){
+    if(state.currentActivity){
+      closeCurrentActivity(Date.now());
+      saveState();
+      renderAll();
+      syncDayToCloud(state.todayKey);
+    }
+    showSummary();
+  });
+  document.getElementById("btnReports").addEventListener("click", function(){
+    showSummaryForDate(state.todayKey);
+  });
+  document.getElementById("summaryClose").addEventListener("click", function(){
+    document.getElementById("summaryOverlay").classList.add("hidden");
+  });
+  document.getElementById("summaryDateInput").addEventListener("change", function(e){
+    if(e.target.value) showSummaryForDate(e.target.value);
+  });
+  document.getElementById("summaryPrevDay").addEventListener("click", function(){
+    const cur = dayKeyToDate(document.getElementById("summaryDateInput").value || state.todayKey);
+    cur.setDate(cur.getDate() - 1);
+    showSummaryForDate(todayKey(cur));
+  });
+  document.getElementById("summaryNextDay").addEventListener("click", function(){
+    const cur = dayKeyToDate(document.getElementById("summaryDateInput").value || state.todayKey);
+    cur.setDate(cur.getDate() + 1);
+    const nextKey = todayKey(cur);
+    if(nextKey > state.todayKey) return;
+    showSummaryForDate(nextKey);
+  });
+
+  // ---- Focus heatmap: day-of-week x time-of-day, all-time aggregate ----
+  // Each cell's score = (weighted useful/necessary time logged) / (time that
+  // window has actually existed so far). Unlogged time inside a window counts
+  // against it exactly like logged waste does -- inconsistent tracking is
+  // itself treated as a low mark, not hidden as "no data".
+  const HEATMAP_BLOCKS = [
+    {label:"12–6am", startHour:0, endHour:6},
+    {label:"6–9am", startHour:6, endHour:9},
+    {label:"9–12pm", startHour:9, endHour:12},
+    {label:"12–3pm", startHour:12, endHour:15},
+    {label:"3–6pm", startHour:15, endHour:18},
+    {label:"6–9pm", startHour:18, endHour:21},
+    {label:"9–12am", startHour:21, endHour:24}
+  ];
+  const HEATMAP_DOW_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  const HEATMAP_TAG_WEIGHT = {useful:1, necessary:0.5, "semi-useful":0.5, waste:0};
+  const HEATMAP_UNTAGGED_WEIGHT = 0.25;
+
+  function computeHeatmapData(){
+    const historyKeys = Object.keys(state.history).filter(function(k){ return (state.history[k]||[]).length > 0; });
+    if(historyKeys.length === 0) return null;
+
+    const earliestDate = startOfDay(dayKeyToDate(historyKeys.sort()[0]));
+    const todayStart = startOfDay(new Date());
+    const now = Date.now();
+
+    const cells = [];
+    for(let d=0; d<7; d++){ cells.push(HEATMAP_BLOCKS.map(function(){ return {actual:0, expected:0}; })); }
+
+    for(let cursor = new Date(earliestDate); cursor.getTime() <= todayStart.getTime(); cursor.setDate(cursor.getDate()+1)){
+      const rowIdx = (cursor.getDay() + 6) % 7; // Mon=0..Sun=6
+      const dayStartMs = cursor.getTime();
+      HEATMAP_BLOCKS.forEach(function(block, blockIdx){
+        const blockStart = dayStartMs + block.startHour*3600000;
+        const blockEnd = dayStartMs + block.endHour*3600000;
+        const effectiveEnd = Math.min(blockEnd, now);
+        if(effectiveEnd > blockStart) cells[rowIdx][blockIdx].expected += (effectiveEnd - blockStart);
+      });
+    }
+
+    Object.keys(state.history).forEach(function(dayKey){
+      (state.history[dayKey] || []).forEach(function(entry){
+        const weight = entry.tag
+          ? (HEATMAP_TAG_WEIGHT[entry.tag] !== undefined ? HEATMAP_TAG_WEIGHT[entry.tag] : HEATMAP_UNTAGGED_WEIGHT)
+          : HEATMAP_UNTAGGED_WEIGHT;
+        let t = entry.start;
+        while(t < entry.end){
+          const d = new Date(t);
+          const hourStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), 0, 0, 0).getTime();
+          const sliceEnd = Math.min(entry.end, hourStart + 3600000);
+          const overlapMs = sliceEnd - t;
+          const rowIdx = (d.getDay() + 6) % 7;
+          const hour = d.getHours();
+          const blockIdx = HEATMAP_BLOCKS.findIndex(function(b){ return hour >= b.startHour && hour < b.endHour; });
+          if(blockIdx >= 0) cells[rowIdx][blockIdx].actual += weight * overlapMs;
+          t = sliceEnd;
+        }
+      });
+    });
+
+    return cells.map(function(row){
+      return row.map(function(cell){
+        if(cell.expected <= 0) return null;
+        return Math.round(Math.min(100, (cell.actual / cell.expected) * 100));
+      });
+    });
+  }
+
+  function heatmapCellColor(score){
+    const stops = [{p:0, c:[139,26,26]}, {p:50, c:[201,138,26]}, {p:100, c:[47,158,68]}];
+    let lo = stops[0], hi = stops[stops.length-1];
+    for(let i=0;i<stops.length-1;i++){
+      if(score >= stops[i].p && score <= stops[i+1].p){ lo = stops[i]; hi = stops[i+1]; break; }
+    }
+    const t = (score - lo.p) / ((hi.p - lo.p) || 1);
+    const rgb = lo.c.map(function(v,i){ return Math.round(v + (hi.c[i]-v)*t); });
+    return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+  }
+
+  function renderHeatmap(){
+    const section = document.getElementById("heatmapSection");
+    const data = computeHeatmapData();
+    if(!data){ section.classList.remove("active"); return; }
+    section.classList.add("active");
+
+    let html = "<div></div>";
+    HEATMAP_BLOCKS.forEach(function(b){ html += `<div class="heatmap-col-label">${b.label}</div>`; });
+    HEATMAP_DOW_LABELS.forEach(function(dayLabel, rowIdx){
+      html += `<div class="heatmap-row-label">${dayLabel}</div>`;
+      data[rowIdx].forEach(function(score){
+        if(score === null){
+          html += `<div class="heatmap-cell empty" title="This window hasn't happened yet">–</div>`;
+        } else {
+          html += `<div class="heatmap-cell" style="background:${heatmapCellColor(score)}" title="${score}/100">${score}</div>`;
+        }
+      });
+    });
+    document.getElementById("heatmapGrid").innerHTML = html;
+  }
+
+  // ---- Recurring activities: same real-world habit, however it was phrased ----
+  const RECURRING_TAG_COLOR_VAR = {useful:"useful", necessary:"necessary", "semi-useful":"semi", waste:"waste"};
+
+  function computeUniqueActivityStats(){
+    const map = {};
+    Object.keys(state.history).forEach(function(dayKey){
+      (state.history[dayKey] || []).forEach(function(entry){
+        const key = (entry.name || "").trim();
+        if(!key) return;
+        if(!map[key]) map[key] = { totalMs: 0, count: 0, tagTotals: {} };
+        map[key].totalMs += entry.duration;
+        map[key].count += 1;
+        const tag = entry.tag || "untagged";
+        map[key].tagTotals[tag] = (map[key].tagTotals[tag] || 0) + entry.duration;
+      });
+    });
+    return map;
+  }
+
+  function buildClusterSummaries(clusters, uniqueStats){
+    const summaries = clusters.map(function(cluster){
+      let totalMs = 0, count = 0;
+      const tagTotals = {};
+      (cluster.members || []).forEach(function(memberName){
+        const stat = uniqueStats[memberName];
+        if(!stat) return;
+        totalMs += stat.totalMs;
+        count += stat.count;
+        Object.keys(stat.tagTotals).forEach(function(tag){
+          tagTotals[tag] = (tagTotals[tag] || 0) + stat.tagTotals[tag];
+        });
+      });
+      let dominantTag = null, maxMs = 0;
+      Object.keys(tagTotals).forEach(function(tag){
+        if(tag !== "untagged" && tagTotals[tag] > maxMs){ maxMs = tagTotals[tag]; dominantTag = tag; }
+      });
+      return { label: cluster.label, totalMs: totalMs, count: count, tag: dominantTag };
+    });
+    summaries.sort(function(a,b){ return b.totalMs - a.totalMs; });
+    return summaries.slice(0, 8);
+  }
+
+  // Clustering is an AI call, so it's cached against the total number of
+  // logged entries -- only re-runs when new activities have actually been
+  // added since the last time it was computed.
+  async function loadRecurringActivities(){
+    const uniqueStats = computeUniqueActivityStats();
+    const names = Object.keys(uniqueStats);
+    if(names.length === 0) return null;
+
+    const totalEntryCount = names.reduce(function(sum, n){ return sum + uniqueStats[n].count; }, 0);
+
+    if(state.recurringCache && state.recurringCache.entryCount === totalEntryCount){
+      return buildClusterSummaries(state.recurringCache.clusters, uniqueStats);
+    }
+
+    try{
+      const res = await fetch(API_BASE + "/cluster-activities", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ names: names })
+      });
+      const data = await res.json();
+      if(!res.ok || data.error) throw new Error(data.error || "Clustering failed");
+      state.recurringCache = { entryCount: totalEntryCount, clusters: data.clusters || [] };
+      saveState();
+      return buildClusterSummaries(state.recurringCache.clusters, uniqueStats);
+    }catch(e){
+      return null;
+    }
+  }
+
+  async function renderRecurringActivities(){
+    const section = document.getElementById("recurringSection");
+    const summaries = await loadRecurringActivities();
+    if(!summaries || summaries.length === 0){ section.classList.remove("active"); return; }
+    section.classList.add("active");
+
+    const maxMs = Math.max.apply(null, summaries.map(function(s){ return s.totalMs; }));
+    document.getElementById("recurringList").innerHTML = summaries.map(function(s){
+      const pct = maxMs > 0 ? Math.round((s.totalMs / maxMs) * 100) : 0;
+      const colorVar = s.tag ? (RECURRING_TAG_COLOR_VAR[s.tag] || "unset") : "unset";
+      return `<div class="recurring-row">
+        <div class="recurring-label">${escapeHtml(s.label)} <span class="recurring-count">×${s.count}</span></div>
+        <div class="recurring-bar-track"><div class="recurring-bar-fill" style="width:${pct}%; background:var(--${colorVar})"></div></div>
+        <div class="recurring-time">${fmtHM(s.totalMs)}</div>
+      </div>`;
+    }).join("");
+  }
+
+  function computeDayStats(dayKey){
+    const log = state.history[dayKey] || [];
+    const totals = {useful:0, necessary:0, waste:0, "semi-useful":0, unset:0};
+    let totalLogged = 0;
+    log.forEach(function(l){
+      const key = l.tag || "unset";
+      totals[key] = (totals[key]||0) + l.duration;
+      totalLogged += l.duration;
+    });
+    const isToday = dayKey === state.todayKey;
+    const dayElapsed = isToday ? (Date.now() - startOfDay(new Date()).getTime()) : 24*60*60*1000;
+    const unaccounted = Math.max(0, dayElapsed - totalLogged);
+    const score = dayElapsed > 0 ? Math.round(((totals.useful + totals.necessary*0.5) / dayElapsed) * 100) : 0;
+    return { totals, dayElapsed, unaccounted, score };
+  }
+
+  function buildRows(stats){
+    return [
+      ["✅ Useful", stats.totals.useful, "useful"],
+      ["⚠️ Necessary", stats.totals.necessary, "necessary"],
+      ["🔵 Semi-useful", stats.totals["semi-useful"], "semi-useful"],
+      ["❌ Waste", stats.totals.waste, "waste"],
+      ["⬜ Untagged", stats.totals.unset, "unset"],
+      ["😴 Rest/Unaccounted", stats.unaccounted, ""]
+    ];
+  }
+
+  function rowsHtml(score, stats){
+    const pct = function(ms){ return stats.dayElapsed > 0 ? Math.round((ms/stats.dayElapsed)*100) : 0; };
+    return `<div class="score-card">
+        <div class="score-value">${score}</div>
+        <div class="score-label">Productivity Score</div>
+      </div>` +
+      buildRows(stats).map(function(r){
+        return `<div class="summary-row"><span>${r[0]}</span><span class="val">${fmtHM(r[1])} (${pct(r[1])}%)</span></div>`;
+      }).join("");
+  }
+
+  function formatDateLabel(dayKey){
+    if(dayKey === state.todayKey) return "Today";
+    return dayKeyToDate(dayKey).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  }
+
+  function insightsHtmlFromList(list){
+    return list.map(function(i){ return `<div class="insight-line">💡 ${escapeHtml(i)}</div>`; }).join("");
+  }
+
+  async function showSummaryForDate(dayKey){
+    let stats = computeDayStats(dayKey);
+    const log = state.history[dayKey] || [];
+    const isToday = dayKey === state.todayKey;
+
+    document.getElementById("summaryDateInput").max = state.todayKey;
+    document.getElementById("summaryDateInput").value = dayKey;
+    document.getElementById("summaryTitle").textContent = formatDateLabel(dayKey);
+    renderHeatmap();
+    renderRecurringActivities();
+    document.getElementById("summaryBody").innerHTML = rowsHtml(stats.score, stats) +
+      `<div class="insights-section"><div class="section-label">AI Insights</div><div id="aiInsights" class="insight-line">🔄 Getting AI insights…</div></div>`;
+    document.getElementById("summaryOverlay").classList.remove("hidden");
+
+    // Past days never change once viewed, so cache the AI result instead of
+    // re-spending a Gemini call every time the user scrubs through history.
+    const cached = state.insightsCache[dayKey];
+    if(!isToday && cached){
+      document.getElementById("summaryBody").innerHTML =
+        rowsHtml(typeof cached.score === "number" ? cached.score : stats.score, stats) +
+        `<div class="insights-section"><div class="section-label">AI Insights</div>${cached.insightsHtml}</div>`;
+      return;
+    }
+
+    try{
+      const res = await fetch(API_BASE + "/insights", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          dateLabel: dayKey,
+          dayElapsedMs: stats.dayElapsed,
+          activities: log.map(function(l){ return { id: l.id, name: l.name, tag: l.tag, rawText: l.rawText, duration: l.duration }; })
+        })
+      });
+      const data = await res.json();
+      if(!res.ok || data.error) throw new Error(data.error || "Insights request failed");
+
+      // Apply Gemini's tag for every activity: it reads the full spoken sentence
+      // (rawText) and correctly picks up tags the local keyword matcher misses,
+      // e.g. tags spoken in Hindi/Hinglish rather than the exact English word.
+      if(Array.isArray(data.classifications) && data.classifications.length){
+        data.classifications.forEach(function(c){
+          const lap = log.find(function(l){ return l.id === c.id; });
+          if(lap && c.tag){ lap.tag = c.tag; }
+        });
+        saveState();
+        syncDayToCloud(dayKey);
+        if(isToday) renderAll();
+        stats = computeDayStats(dayKey);
+      }
+
+      const insightsHtml = insightsHtmlFromList(data.insights || []);
+      const finalScore = typeof data.score === "number" ? data.score : stats.score;
+      document.getElementById("summaryBody").innerHTML = rowsHtml(finalScore, stats) +
+        `<div class="insights-section"><div class="section-label">AI Insights</div>${insightsHtml}</div>`;
+
+      if(!isToday){
+        state.insightsCache[dayKey] = { score: finalScore, insightsHtml: insightsHtml };
+        saveState();
+      }
+    }catch(e){
+      const el = document.getElementById("aiInsights");
+      if(el) el.textContent = "Couldn't reach AI insights service — showing local totals only.";
+    }
+  }
+
+  function showSummary(){ showSummaryForDate(state.todayKey); }
+
+  // ---- Init ----
+  rolloverIfNeeded();
+  renderAll();
+  tick();
+  setInterval(tick, 1000);
+  hydrateHistoryFromCloud();
+  pollCurrentActivityFromCloud();
+  setInterval(pollCurrentActivityFromCloud, 20000);
+  document.addEventListener("visibilitychange", function(){
+    if(document.visibilityState === "visible") pollCurrentActivityFromCloud();
+  });
+
+})();
+</script>
+</body>
+</html>
