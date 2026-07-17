@@ -21,6 +21,8 @@ create index if not exists voice_tracker_activities_day_key_idx on voice_tracker
 -- keys. Only the Worker's service_role key (which always bypasses RLS) can reach this
 -- table, so even if the anon key ever leaked, this data stays inaccessible.
 alter table voice_tracker_activities enable row level security;
+grant usage on schema public to service_role;
+grant all on table voice_tracker_activities to service_role;
 
 -- Single-row table mirroring whatever activity is CURRENTLY running (not yet a
 -- finished lap), so a second device can pick up "something is running" without
