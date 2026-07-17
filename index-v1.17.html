@@ -1318,16 +1318,20 @@
     const log = state.history[dayKey] || [];
     const isToday = dayKey === state.todayKey;
 
+    // Show the panel and today's basic numbers immediately -- don't make the
+    // user wait for the heatmap/recurring/predictions AI calls below just to
+    // see that anything happened at all.
     document.getElementById("summaryDateInput").max = state.todayKey;
     document.getElementById("summaryDateInput").value = dayKey;
     document.getElementById("summaryTitle").textContent = formatDateLabel(dayKey);
+    document.getElementById("summaryBody").innerHTML = rowsHtml(stats.score, stats) +
+      `<div class="insights-section"><div class="section-label">AI Insights</div><div id="aiInsights" class="insight-line">🔄 Getting AI insights…</div></div>`;
+    document.getElementById("summaryOverlay").classList.remove("hidden");
+
     renderHeatmap();
     await renderRecurringActivities();
     renderFragmentation();
     await renderPredictions();
-    document.getElementById("summaryBody").innerHTML = rowsHtml(stats.score, stats) +
-      `<div class="insights-section"><div class="section-label">AI Insights</div><div id="aiInsights" class="insight-line">🔄 Getting AI insights…</div></div>`;
-    document.getElementById("summaryOverlay").classList.remove("hidden");
 
     // Past days never change once viewed, so cache the AI result instead of
     // re-spending a Gemini call every time the user scrubs through history.
