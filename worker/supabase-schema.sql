@@ -40,3 +40,36 @@ create table if not exists voice_tracker_current_state (
 alter table voice_tracker_current_state enable row level security;
 grant usage on schema public to service_role;
 grant all on table voice_tracker_current_state to service_role;
+
+-- Behavior Intelligence: long-term memory for the reasoning engine.
+-- "statement" is free text (not an enum/fixed relationship type) because
+-- Gemini generates hypotheses open-endedly -- the schema can't predict what
+-- shape a relationship will take, only how to track its lifecycle/evidence.
+create table if not exists voice_tracker_hypotheses (
+  id text primary key,
+  statement text not null,
+  confidence text not null, -- 'low' | 'medium' | 'high'
+  status text not null default 'candidate', -- 'candidate' | 'confirmed' | 'retired'
+  evidence text,
+  created_at timestamptz default now(),
+  last_reviewed_at timestamptz default now()
+);
+
+alter table voice_tracker_hypotheses enable row level security;
+grant usage on schema public to service_role;
+grant all on table voice_tracker_hypotheses to service_role;
+
+-- Context the reasoning engine asked for directly (mood, energy, reasons) that
+-- can't be inferred from timestamps alone -- feeds back into the next
+-- reasoning pass so the same question is never asked twice.
+create table if not exists voice_tracker_context_answers (
+  id text primary key,
+  question text not null,
+  answer text not null,
+  hypothesis_id text references voice_tracker_hypotheses(id) on delete set null,
+  created_at timestamptz default now()
+);
+
+alter table voice_tracker_context_answers enable row level security;
+grant usage on schema public to service_role;
+grant all on table voice_tracker_context_answers to service_role;

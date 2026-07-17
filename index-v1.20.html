@@ -357,7 +357,7 @@
   function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 
   function defaultState(){
-    return { history:{}, currentActivity:null, currentActivityUpdatedAt:0, todayKey: todayKey(), lang:"en-IN", theme:"dark", insightsCache:{}, recurringCache:null, predictionCache:null, reasoningCache:null, insightRotationIndex:0, answeredQuestionTexts:[] };
+    return { history:{}, currentActivity:null, currentActivityUpdatedAt:0, todayKey: todayKey(), lang:"en-IN", theme:"dark", insightsCache:{}, recurringCache:null, predictionCache:null, reasoningCache:null, insightRotationIndex:0 };
   }
   // Gemini doesn't always return the tag in exactly the lowercase form asked
   // for (e.g. "USEFUL" instead of "useful"), and every lookup in this app
@@ -385,7 +385,6 @@
       if(s.recurringCache === undefined) s.recurringCache = null;
       if(s.predictionCache === undefined) s.predictionCache = null;
       if(s.reasoningCache === undefined) s.reasoningCache = null;
-      if(!s.answeredQuestionTexts) s.answeredQuestionTexts = [];
       if(s.insightRotationIndex === undefined) s.insightRotationIndex = 0;
 
       Object.keys(s.history).forEach(function(dayKey){
@@ -1550,25 +1549,10 @@
     });
   }
 
-  // Bump this whenever the /reason response shape changes -- otherwise a
-  // cache written against an older contract (or an empty result cached from
-  // before the Worker had this endpoint deployed) sticks around silently
-  // until the next calendar day, since the cache key below is date-only.
-  const REASONING_CACHE_VERSION = 2;
-
-  function isEmptyReasoningResult(cache){
-    return !cache.headline && !cache.teaser
-      && (!cache.hypotheses || cache.hypotheses.length === 0)
-      && (!cache.clarifyingQuestions || cache.clarifyingQuestions.length === 0);
-  }
-
   async function loadReasoning(){
     const dayCount = Object.keys(state.history).filter(function(k){ return (state.history[k]||[]).length > 0; }).length;
     if(dayCount === 0) return null;
-    if(state.reasoningCache
-       && state.reasoningCache.computedDayKey === state.todayKey
-       && state.reasoningCache.version === REASONING_CACHE_VERSION
-       && !isEmptyReasoningResult(state.reasoningCache)){
+    if(state.reasoningCache && state.reasoningCache.computedDayKey === state.todayKey){
       return state.reasoningCache;
     }
     try{
@@ -1581,11 +1565,10 @@
       const data = await res.json();
       if(!res.ok || data.error) throw new Error(data.error || "Reasoning request failed");
       state.reasoningCache = {
-        version: REASONING_CACHE_VERSION,
         computedDayKey: state.todayKey,
         headline: data.headline || null,
         teaser: data.teaser || null,
-        clarifyingQuestions: data.clarifyingQuestions || [],
+        clarifyingQuestion: data.clarifyingQuestion || null,
         hypotheses: data.hypotheses || []
       };
       saveState();
@@ -1598,18 +1581,7 @@
   }
 
   let bannerDismissed = false;
-
-  // Which of the current cache's clarifying questions haven't been answered
-  // yet, in order. Answered-ness is read from state.answeredQuestionTexts,
-  // which is persisted (unlike a plain JS variable) so a refresh doesn't
-  // forget you already answered and re-show the same question.
-  function pendingQuestions(){
-    const cache = state.reasoningCache;
-    if(!cache || !cache.clarifyingQuestions) return [];
-    return cache.clarifyingQuestions.filter(function(q){
-      return state.answeredQuestionTexts.indexOf(q.text) === -1;
-    });
-  }
+  let questionAnswered = false;
 
   // Everything currently known worth surfacing -- every live (non-retired)
   // hypothesis plus the teaser -- de-duplicated. The banner rotates through
@@ -1649,27 +1621,26 @@
 
   function renderQuestionCard(){
     const card = document.getElementById("questionCard");
-    const pending = pendingQuestions();
-    if(pending.length === 0){
+    const cache = state.reasoningCache;
+    if(questionAnswered || !cache || !cache.clarifyingQuestion){
       card.classList.add("hidden");
       return;
     }
-    document.getElementById("questionText").textContent = pending[0].text;
+    document.getElementById("questionText").textContent = cache.clarifyingQuestion.text;
     card.classList.remove("hidden");
   }
 
   function submitContextAnswer(answerText){
-    const pending = pendingQuestions();
-    if(pending.length === 0 || !answerText || !answerText.trim()) return;
-    const q = pending[0];
-    state.answeredQuestionTexts.push(q.text);
-    saveState();
-    renderQuestionCard(); // shows the next pending question, if there is one
+    const cache = state.reasoningCache;
+    if(!cache || !cache.clarifyingQuestion || !answerText || !answerText.trim()) return;
+    const q = cache.clarifyingQuestion;
+    questionAnswered = true;
+    renderQuestionCard();
     fetch(API_BASE + "/context-answer", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ question: q.text, answer: answerText.trim(), hypothesisId: null })
-    }).catch(function(){ /* best-effort -- answer is already recorded locally either way */ });
+    }).catch(function(){ /* best-effort -- next reasoning pass will just ask again if this was lost */ });
   }
 
   function buildRows(stats){

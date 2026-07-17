@@ -400,6 +400,200 @@ Respond ONLY with JSON in this exact shape:
   return json({ predictions: parsed.predictions || [] }, 200, origin);
 }
 
+// ---- Behavior Intelligence reasoning engine ----
+// This is the standing "framework" the whole engine reasons inside: the
+// domain model (Event/Pattern/Hypothesis/Context/Confidence) plus explicit
+// rules for how confident to be, when to ask instead of assert, and when to
+// admit there isn't enough data yet rather than invent a pattern. Gemini does
+// the actual pattern-finding here -- the Worker only guarantees the input
+// data (computed client-side) and prior memory it's given are correct.
+const REASONING_FRAMEWORK = `
+You are the Behavior Intelligence reasoning engine for a personal voice-logged time-tracking app. Your job is to act as a mirror -- helping this one person understand their own patterns -- not to diagnose, not to give generic productivity advice, and never to state something as fact on weak evidence.
+
+DOMAIN MODEL you must reason within:
+- Event: a single logged activity (name, tag, duration, time of day).
+- Pattern: a repeated behavior you notice across many events.
+- Hypothesis: a possible explanation YOU generate that must be confirmed over time with evidence -- never asserted as settled fact from one or two observations.
+- Context: subjective information (mood, energy, reasons) that cannot be read from timestamps -- you may ask the user directly for this when it's the one thing blocking your confidence.
+- Confidence: every hypothesis carries a confidence level grounded in the AMOUNT and CONSISTENCY of supporting evidence, never intuition or a plausible-sounding story.
+
+WHAT TO DO EACH RUN:
+1. Look broadly across everything given below (day-by-day stats, recurring activities, timing, streaks, self-reported context, and anything already known from previous runs) for relationships worth flagging. Do not limit yourself to a fixed list of relationship types -- explore timing, sequencing, day-of-week effects, activity-pairing, mood/context correlations, anything the data actually supports.
+2. Score confidence honestly:
+   - "low": fewer than ~5 comparable data points, or an inconsistent direction.
+   - "medium": 5-14 data points with a reasonably consistent direction.
+   - "high": 15+ data points with a strong, consistent direction.
+3. You will be given hypotheses already tracked from previous runs. Re-evaluate each one with the new data instead of ignoring it: raise or lower its confidence, or mark it "retired" if the new data contradicts it. Reuse its exact id when updating it. Do not create a duplicate of an existing hypothesis.
+4. If one or more hypotheses are interesting but stuck at low confidence specifically because you're missing subjective CONTEXT (not more time-data, but something like mood, energy, or a reason) -- you may propose up to THREE clarifying questions, each plain, conversational, and specific to a different hypothesis (never two questions about the same one). Only ask if the answer would meaningfully change your confidence. Never ask something already answered (see prior answers below) or already pending from a previous run (see below) -- always prefer covering a new hypothesis over repeating one already asked.
+5. If overall data volume is too thin to say anything specific yet, do NOT invent a claim. Instead return an honest "teaser": a short description of a real category of thing you will eventually be able to say once there's more data (e.g. "once there are a couple more weeks of logs I'll be able to tell you which time of day you focus best"). It must describe something you will actually check, not a fabricated result about this person.
+6. Pick exactly one "headline": the single most useful thing to surface right now -- your best hypothesis if at least one has medium+ confidence, otherwise the teaser.
+
+Never diagnose a mental health condition. Speak like a thoughtful, encouraging companion, not a clinician or a fortune teller. Be specific and grounded in the data given -- no generic advice.
+`.trim();
+
+async function fetchHypothesesAndContext(env) {
+  const headers = {
+    apikey: env.SUPABASE_SERVICE_KEY,
+    Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+  };
+  const [hypRes, ctxRes] = await Promise.all([
+    fetch(`${env.SUPABASE_URL}/rest/v1/voice_tracker_hypotheses?status=neq.retired&select=*&order=last_reviewed_at.desc`, { headers }),
+    fetch(`${env.SUPABASE_URL}/rest/v1/voice_tracker_context_answers?select=*&order=created_at.desc&limit=30`, { headers }),
+  ]);
+  const hypotheses = hypRes.ok ? await hypRes.json() : [];
+  const contextAnswers = ctxRes.ok ? await ctxRes.json() : [];
+  return { hypotheses, contextAnswers };
+}
+
+async function upsertHypotheses(env, hypotheses) {
+  const headers = {
+    apikey: env.SUPABASE_SERVICE_KEY,
+    Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+    "Content-Type": "application/json",
+  };
+  const results = [];
+  for (const h of hypotheses || []) {
+    if (h.id) {
+      await fetch(`${env.SUPABASE_URL}/rest/v1/voice_tracker_hypotheses?id=eq.${h.id}`, {
+        method: "PATCH",
+        headers: { ...headers, Prefer: "return=minimal" },
+        body: JSON.stringify({
+          statement: h.statement,
+          confidence: h.confidence,
+          status: h.status || "candidate",
+          evidence: h.evidence || "",
+          last_reviewed_at: new Date().toISOString(),
+        }),
+      }).catch(() => {});
+      results.push(Object.assign({}, h));
+    } else {
+      const id = crypto.randomUUID();
+      await fetch(`${env.SUPABASE_URL}/rest/v1/voice_tracker_hypotheses`, {
+        method: "POST",
+        headers: { ...headers, Prefer: "return=minimal" },
+        body: JSON.stringify([{
+          id,
+          statement: h.statement,
+          confidence: h.confidence,
+          status: h.status || "candidate",
+          evidence: h.evidence || "",
+        }]),
+      }).catch(() => {});
+      results.push(Object.assign({}, h, { id }));
+    }
+  }
+  return results;
+}
+
+async function handleReason(request, env) {
+  const origin = request.headers.get("Origin");
+  const body = await request.json();
+  const { dataset } = body;
+  if (!Array.isArray(dataset)) return json({ error: "dataset array is required" }, 400, origin);
+
+  const { hypotheses: priorHypotheses, contextAnswers } = await fetchHypothesesAndContext(env);
+
+  const dayLines = dataset
+    .map((d) => {
+      const tagMin = Object.keys(d.tagTotalsMs || {})
+        .map((t) => `${t}:${Math.round(d.tagTotalsMs[t] / 60000)}m`)
+        .join(", ");
+      const topActs = (d.topActivities || []).map((a) => `"${a.name}" (${a.count}x, ${Math.round(a.durationMs / 60000)}m)`).join("; ");
+      return `- ${d.dayKey} (${d.dayOfWeek}): logged ${Math.round(d.totalLoggedMs / 60000)}m, consistency ${d.loggingConsistencyPct}%, switches ${d.fragmentationCount}, tags [${tagMin}]${topActs ? `, top activities: ${topActs}` : ""}${d.selfReported ? `, self-reported: ${JSON.stringify(d.selfReported)}` : ""}`;
+    })
+    .join("\n");
+
+  const priorHypLines = priorHypotheses.length
+    ? priorHypotheses.map((h) => `- id "${h.id}" [${h.confidence}, ${h.status}]: ${h.statement} (evidence: ${h.evidence || "none recorded"})`).join("\n")
+    : "(none yet -- this may be the first run)";
+
+  const priorContextLines = contextAnswers.length
+    ? contextAnswers.map((c) => `- Q: "${c.question}" -> A: "${c.answer}"`).join("\n")
+    : "(none yet)";
+
+  const prompt = `
+${REASONING_FRAMEWORK}
+
+DAY-BY-DAY DATA (deterministically computed, correct):
+${dayLines || "(no days logged yet)"}
+
+HYPOTHESES ALREADY TRACKED FROM PREVIOUS RUNS:
+${priorHypLines}
+
+CONTEXT ALREADY ANSWERED BY THE USER (do not ask these again):
+${priorContextLines}
+
+Respond ONLY with JSON in this exact shape:
+{
+  "hypotheses": [ { "id": "<existing id if updating, omit for new>", "statement": "...", "confidence": "low|medium|high", "evidence": "short explanation of what supports this", "status": "candidate|confirmed|retired" } ],
+  "clarifyingQuestions": [ { "text": "...", "relatedHypothesis": "<statement this relates to>" }, ... ] (empty array if none worth asking),
+  "teaser": "<string>" or null,
+  "headline": "<the single string to show the user right now>"
+}
+`.trim();
+
+  const geminiRes = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${env.GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: "application/json" },
+      }),
+    }
+  );
+
+  const geminiData = await geminiRes.json();
+  if (!geminiRes.ok) {
+    return json({ error: geminiData.error?.message || "Gemini request failed" }, 502, origin);
+  }
+
+  const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    return json({ error: "Gemini returned unparseable output", raw: text }, 502, origin);
+  }
+
+  const savedHypotheses = await upsertHypotheses(env, parsed.hypotheses || []);
+
+  return json(
+    {
+      hypotheses: savedHypotheses,
+      clarifyingQuestions: parsed.clarifyingQuestions || [],
+      teaser: parsed.teaser || null,
+      headline: parsed.headline || null,
+    },
+    200,
+    origin
+  );
+}
+
+async function handleContextAnswer(request, env) {
+  const origin = request.headers.get("Origin");
+  const body = await request.json();
+  const { question, answer, hypothesisId } = body;
+  if (!question || !answer) return json({ error: "question and answer are required" }, 400, origin);
+
+  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/voice_tracker_context_answers`, {
+    method: "POST",
+    headers: {
+      apikey: env.SUPABASE_SERVICE_KEY,
+      Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: "return=minimal",
+    },
+    body: JSON.stringify([{ id: crypto.randomUUID(), question, answer, hypothesis_id: hypothesisId || null }]),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    return json({ error: err.message || "Supabase context-answer insert failed" }, 502, origin);
+  }
+  return json({ ok: true }, 200, origin);
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin");
@@ -432,6 +626,12 @@ export default {
       }
       if (request.method === "POST" && url.pathname === "/predict") {
         return await handlePredict(request, env);
+      }
+      if (request.method === "POST" && url.pathname === "/reason") {
+        return await handleReason(request, env);
+      }
+      if (request.method === "POST" && url.pathname === "/context-answer") {
+        return await handleContextAnswer(request, env);
       }
     } catch (err) {
       return json({ error: err.message || "Unexpected error" }, 500, origin);

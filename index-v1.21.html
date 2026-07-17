@@ -1550,25 +1550,10 @@
     });
   }
 
-  // Bump this whenever the /reason response shape changes -- otherwise a
-  // cache written against an older contract (or an empty result cached from
-  // before the Worker had this endpoint deployed) sticks around silently
-  // until the next calendar day, since the cache key below is date-only.
-  const REASONING_CACHE_VERSION = 2;
-
-  function isEmptyReasoningResult(cache){
-    return !cache.headline && !cache.teaser
-      && (!cache.hypotheses || cache.hypotheses.length === 0)
-      && (!cache.clarifyingQuestions || cache.clarifyingQuestions.length === 0);
-  }
-
   async function loadReasoning(){
     const dayCount = Object.keys(state.history).filter(function(k){ return (state.history[k]||[]).length > 0; }).length;
     if(dayCount === 0) return null;
-    if(state.reasoningCache
-       && state.reasoningCache.computedDayKey === state.todayKey
-       && state.reasoningCache.version === REASONING_CACHE_VERSION
-       && !isEmptyReasoningResult(state.reasoningCache)){
+    if(state.reasoningCache && state.reasoningCache.computedDayKey === state.todayKey){
       return state.reasoningCache;
     }
     try{
@@ -1581,7 +1566,6 @@
       const data = await res.json();
       if(!res.ok || data.error) throw new Error(data.error || "Reasoning request failed");
       state.reasoningCache = {
-        version: REASONING_CACHE_VERSION,
         computedDayKey: state.todayKey,
         headline: data.headline || null,
         teaser: data.teaser || null,
