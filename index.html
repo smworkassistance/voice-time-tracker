@@ -226,6 +226,20 @@
   function defaultState(){
     return { history:{}, currentActivity:null, currentActivityUpdatedAt:0, todayKey: todayKey(), lang:"en-IN", theme:"dark" };
   }
+
+  // Gemini doesn't always return the tag in exactly the lowercase form asked
+  // for (e.g. "USEFUL" instead of "useful"), and every lookup in this app
+  // (totals.useful, TAG_LABEL[...], var(--${tag})) is an exact-case match --
+  // a mismatched case silently creates a phantom bucket nobody displays,
+  // while the overall duration math still looks fine. Normalize at every
+  // point tag data enters the app, not just where it's used.
+  function normalizeTagCase(tag){ return tag ? tag.toLowerCase() : tag; }
+
+  // Tracks which days had a case fix applied on load, so the corrected data
+  // can be pushed back to Supabase once (see Init) instead of the cloud copy
+  // staying stale forever.
+  let dayKeysNeedingResyncAfterTagFix = [];
+
   function loadState(){
     try{
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -235,6 +249,21 @@
       if(s.lang === undefined) s.lang = "en-IN";
       if(s.theme === undefined) s.theme = "dark";
       if(s.currentActivityUpdatedAt === undefined) s.currentActivityUpdatedAt = 0;
+
+      Object.keys(s.history).forEach(function(dayKey){
+        let changed = false;
+        (s.history[dayKey] || []).forEach(function(entry){
+          if(entry.tag && entry.tag !== normalizeTagCase(entry.tag)){
+            entry.tag = normalizeTagCase(entry.tag);
+            changed = true;
+          }
+        });
+        if(changed) dayKeysNeedingResyncAfterTagFix.push(dayKey);
+      });
+      if(s.currentActivity && s.currentActivity.tag){
+        s.currentActivity.tag = normalizeTagCase(s.currentActivity.tag);
+      }
+
       return s;
     }catch(e){ return defaultState(); }
   }
@@ -331,7 +360,7 @@
       if(remoteUpdatedAt <= (state.currentActivityUpdatedAt || 0)) return;
 
       state.currentActivity = data.activityId
-        ? { id: data.activityId, name: data.name, tag: data.tag, rawText: data.rawText, start: data.start }
+        ? { id: data.activityId, name: data.name, tag: normalizeTagCase(data.tag), rawText: data.rawText, start: data.start }
         : null;
       state.currentActivityUpdatedAt = remoteUpdatedAt;
       saveState();
@@ -346,7 +375,9 @@
       if(!res.ok || data.error) return;
       let changed = false;
       Object.keys(data.history || {}).forEach(function(dayKey){
-        const cloudEntries = data.history[dayKey] || [];
+        const cloudEntries = (data.history[dayKey] || []).map(function(e){
+          return Object.assign({}, e, { tag: normalizeTagCase(e.tag) });
+        });
         const localEntries = state.history[dayKey];
         if(!localEntries || localEntries.length === 0){
           // No local data for this day (a fresh browser starts today as an
@@ -907,7 +938,7 @@
         const log = todayLog();
         data.classifications.forEach(function(c){
           const lap = log.find(function(l){ return l.id === c.id; });
-          if(lap && c.tag){ lap.tag = c.tag; }
+          if(lap && c.tag){ lap.tag = normalizeTagCase(c.tag); }
         });
         saveState();
         syncDayToCloud(state.todayKey);
@@ -933,6 +964,13 @@
   renderAll();
   tick();
   setInterval(tick, 1000);
+  // One-time self-heal: if loadState() found and fixed any uppercase tags
+  // (see normalizeTagCase), push the corrected data back to Supabase so the
+  // cloud copy isn't left permanently stale.
+  if(dayKeysNeedingResyncAfterTagFix.length){
+    saveState();
+    dayKeysNeedingResyncAfterTagFix.forEach(function(dayKey){ syncDayToCloud(dayKey); });
+  }
   hydrateHistoryFromCloud();
   pollCurrentActivityFromCloud();
   setInterval(pollCurrentActivityFromCloud, 20000);
