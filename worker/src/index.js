@@ -335,6 +335,71 @@ Respond ONLY with JSON in this exact shape:
   return json({ clusters: parsed.clusters || [] }, 200, origin);
 }
 
+async function handlePredict(request, env) {
+  const origin = request.headers.get("Origin");
+  const body = await request.json();
+  const { bestWindow, worstWindow, recurringActivities, fragmentationInsight, recentScores } = body;
+
+  const recurringLines = (recurringActivities || [])
+    .map((a) => `- "${a.label}" — ${a.totalMinutes} min total across ${a.count} times, tagged ${a.tag || "mixed"}`)
+    .join("\n");
+
+  const scoreLines = (recentScores || [])
+    .map((s) => `- ${s.dayKey}: ${s.score}/100`)
+    .join("\n");
+
+  const fragText = fragmentationInsight
+    ? `Days with more than ${fragmentationInsight.medianLaps} activity switches average ${fragmentationInsight.avgHigh}/100, vs ${fragmentationInsight.avgLow}/100 on calmer days.`
+    : "Not enough data yet to know if activity-switching affects this person's score.";
+
+  const prompt = `
+You are analyzing real behavioral data from a personal voice-logged time-tracking app, to predict what's LIKELY to keep happening if nothing changes, and give forward-looking advice grounded in this specific data -- not generic productivity tips.
+
+Best focus window observed: ${bestWindow ? `${bestWindow.day} ${bestWindow.block} (score ${bestWindow.score}/100)` : "not enough data yet"}
+Worst focus window observed: ${worstWindow ? `${worstWindow.day} ${worstWindow.block} (score ${worstWindow.score}/100)` : "not enough data yet"}
+
+Top recurring activities:
+${recurringLines || "(none yet)"}
+
+Activity-switching pattern: ${fragText}
+
+Recent daily scores:
+${scoreLines || "(none yet)"}
+
+Write 3-4 short, specific, forward-looking predictions/insights in Hinglish (mix of Hindi+English). Each one must reference an actual number or window from the data above -- no vague generic advice. Include at least one encouraging note about what's working well. Frame predictions as "this is likely to continue unless..." rather than blame.
+
+Respond ONLY with JSON in this exact shape:
+{ "predictions": ["<short specific prediction/insight>", "... 3-4 total"] }
+`.trim();
+
+  const geminiRes = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${env.GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: "application/json" },
+      }),
+    }
+  );
+
+  const geminiData = await geminiRes.json();
+  if (!geminiRes.ok) {
+    return json({ error: geminiData.error?.message || "Gemini request failed" }, 502, origin);
+  }
+
+  const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    return json({ error: "Gemini returned unparseable output", raw: text }, 502, origin);
+  }
+
+  return json({ predictions: parsed.predictions || [] }, 200, origin);
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin");
@@ -364,6 +429,9 @@ export default {
       }
       if (request.method === "POST" && url.pathname === "/cluster-activities") {
         return await handleClusterActivities(request, env);
+      }
+      if (request.method === "POST" && url.pathname === "/predict") {
+        return await handlePredict(request, env);
       }
     } catch (err) {
       return json({ error: err.message || "Unexpected error" }, 500, origin);
